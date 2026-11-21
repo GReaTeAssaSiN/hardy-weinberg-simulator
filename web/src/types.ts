@@ -2,6 +2,7 @@ export type SimulationParams = {
   n: number;
   p0: number;
   generations: number;
+  migration?: { m: number; p_m: number };
 };
 
 export type GenerationRow = {

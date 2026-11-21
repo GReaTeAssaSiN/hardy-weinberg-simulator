@@ -10,13 +10,13 @@ import {
 } from 'recharts';
 import type { GenerationRow, SimulationParams, SimulationResult } from './types';
 
-type Inputs = { n: string; p0: string; generations: string };
-type FieldErrors = Partial<Record<keyof Inputs, string>>;
+type InputField = 'n' | 'p0' | 'generations' | 'm' | 'p_m';
+type Inputs = Record<InputField, string> & { migrationEnabled: boolean };
+type FieldErrors = Partial<Record<InputField, string>>;
 type TabName = 'alleles' | 'genotypes' | 'heterozygosity' | 'table';
 
-const INITIAL: Inputs = { n: '500', p0: '0,5', generations: '100' };
-const FACTORS = [
-  ['Миграция', 'm, pₘ'],
+const INITIAL: Inputs = { n: '500', p0: '0,5', generations: '100', migrationEnabled: false, m: '0,1', p_m: '0,8' };
+const UPCOMING_FACTORS = [
   ['Отбор', 'w₁₁, w₁₂, w₂₂'],
   ['Неслучайное скрещивание', 'F'],
   ['Генетический дрейф', 'N'],
@@ -47,7 +47,15 @@ function validate(inputs: Inputs): { params?: SimulationParams; errors: FieldErr
   if (!Number.isInteger(generations) || generations < 1 || generations > 1_000) {
     errors.generations = 'Введите целое число от 1 до 1 000';
   }
-  return Object.keys(errors).length ? { errors } : { errors, params: { n, p0, generations } };
+  const params: SimulationParams = { n, p0, generations };
+  if (inputs.migrationEnabled) {
+    const m = parseDecimal(inputs.m);
+    const p_m = parseDecimal(inputs.p_m);
+    if (!Number.isFinite(m) || m < 0 || m > 1) errors.m = 'Введите число от 0 до 1';
+    if (!Number.isFinite(p_m) || p_m < 0 || p_m > 1) errors.p_m = 'Введите число от 0 до 1';
+    params.migration = { m, p_m };
+  }
+  return Object.keys(errors).length ? { errors } : { errors, params };
 }
 
 function Info({ text }: { text: string }) {
@@ -109,8 +117,16 @@ export default function App() {
   const [requestError, setRequestError] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
   const validation = useMemo(() => validate(inputs), [inputs]);
+  const currentParams = validation.params;
+  const resultParams = result?.params;
+  const migration = resultParams?.migration;
   const q = Number.isFinite(parseDecimal(inputs.p0)) && parseDecimal(inputs.p0) >= 0 && parseDecimal(inputs.p0) <= 1 ? display(1 - parseDecimal(inputs.p0)) : '—';
-  const resultIsStale = result && (!validation.params || result.params.n !== validation.params.n || result.params.p0 !== validation.params.p0 || result.params.generations !== validation.params.generations);
+  const resultIsStale = resultParams && (
+    resultParams.n !== currentParams?.n || resultParams.p0 !== currentParams?.p0 ||
+    resultParams.generations !== currentParams?.generations ||
+    migration?.m !== currentParams?.migration?.m || migration?.p_m !== currentParams?.migration?.p_m
+  );
+  const mode = (resultParams ? Boolean(migration) : inputs.migrationEnabled) ? 'Миграция' : 'Идеальная популяция';
 
   useEffect(() => {
     const controller = new AbortController();
@@ -118,7 +134,7 @@ export default function App() {
     return () => controller.abort();
   }, []);
 
-  function update(field: keyof Inputs, value: string) { setInputs((previous) => ({ ...previous, [field]: value })); }
+  function update(field: InputField, value: string) { setInputs((previous) => ({ ...previous, [field]: value })); }
 
   async function run() {
     setAttempted(true);
@@ -163,15 +179,49 @@ export default function App() {
           <label><ParamLabel label="Частота p (A)" info="Начальная доля аллеля A: число от 0 до 1." /><TextField value={inputs.p0} onChange={(e) => update('p0', e.target.value)} error={attempted && !!validation.errors.p0} helperText={attempted ? validation.errors.p0 : undefined} slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': 'Частота p (A)' } }} /></label>
           <label><ParamLabel label="Частота q (a)" info="Доля аллеля a вычисляется автоматически: q = 1 − p." /><TextField value={q} disabled slotProps={{ htmlInput: { 'aria-label': 'Частота q (a)' } }} /></label>
         </div>
-        <div className="factors-heading"><span className="eyebrow">Факторы</span><span className="section-hint">пока недоступны</span></div>
-        <div className="factor-list">{FACTORS.map(([name, symbol]) => <div className="factor" key={name}><Switch disabled size="small" slotProps={{ input: { 'aria-label': name } }} /><span>{name}</span><small>{symbol}</small></div>)}</div>
-        <div className="model-note"><span className="note-icon">i</span><div><strong>Идеальная популяция</strong><br />Расчет без отбора, миграции, инбридинга и дрейфа.</div></div>
+        <div className="factors-heading"><span className="eyebrow">Факторы</span></div>
+        <div className="factor-list">
+          <div className={inputs.migrationEnabled ? 'factor-card factor-card-active' : 'factor-card'}>
+            <label className="factor factor-toggle">
+              <Switch
+                checked={inputs.migrationEnabled} size="small"
+                onChange={(_, checked) => setInputs((previous) => ({ ...previous, migrationEnabled: checked }))}
+                slotProps={{ input: { role: 'switch', 'aria-label': 'Миграция' } }}
+              />
+              <span>Миграция</span><small>m, pₘ</small>
+            </label>
+            {inputs.migrationEnabled && <div className="fields-grid migration-fields">
+              <label>
+                <ParamLabel label="Доля мигрантов m" info="Доля мигрантов в каждом поколении: от 0 до 1." />
+                <TextField value={inputs.m} onChange={(e) => update('m', e.target.value)}
+                  error={attempted && !!validation.errors.m} helperText={attempted ? validation.errors.m : undefined}
+                  slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': 'Доля мигрантов m' } }} />
+              </label>
+              <label>
+                <ParamLabel label="Частота pₘ" info="Частота аллеля A среди мигрантов: от 0 до 1." />
+                <TextField value={inputs.p_m} onChange={(e) => update('p_m', e.target.value)}
+                  error={attempted && !!validation.errors.p_m} helperText={attempted ? validation.errors.p_m : undefined}
+                  slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': 'Частота pₘ' } }} />
+              </label>
+            </div>}
+          </div>
+          {UPCOMING_FACTORS.map(([name, symbol]) => <div className="factor" key={name}><Switch disabled size="small" slotProps={{ input: { 'aria-label': name } }} /><span>{name}</span><small>{symbol}</small></div>)}
+        </div>
+        <div className="model-note"><span className="note-icon">i</span><div>
+          <strong>{inputs.migrationEnabled ? 'Миграция' : 'Идеальная популяция'}</strong><br />
+          {inputs.migrationEnabled ? 'Доля m популяции в каждом поколении приходится на мигрантов.' : 'Расчет без отбора, миграции, инбридинга и дрейфа.'}
+        </div></div>
         <div className="actions"><Button variant="contained" onClick={run} disabled={loading} startIcon={loading ? <CircularProgress size={15} color="inherit" /> : <span className="play-icon">▶</span>}>{loading ? 'Расчет…' : 'Запустить'}</Button><Button variant="outlined" color="inherit" onClick={reset} disabled={loading}>Сбросить</Button></div>
       </aside>
       <section className="panel results-panel" aria-label="Результаты моделирования">
-        <div className="results-header"><div><span className="eyebrow">Моделирование</span><h1>Результат моделирования</h1></div><span className="mode-badge"><span />Идеальная популяция</span></div>
+        <div className="results-header"><div><span className="eyebrow">Моделирование</span><h1>Результат моделирования</h1></div><span className="mode-badge"><span />{mode}</span></div>
         {requestError && <div className="alert-space"><Alert severity="error" action={<Button color="inherit" size="small" onClick={run} disabled={loading}>Повторить</Button>}>{requestError}</Alert></div>}
-        {!result && !loading && <div className="empty-state"><div className="empty-chart"><svg viewBox="0 0 100 72" fill="none" aria-hidden="true"><path d="M10 7v52h80" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/><path d="M17 46 35 33l17 5 17-20 17 6" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="69" cy="18" r="4" fill="currentColor"/></svg></div><h2>Здесь появятся результаты</h2><p>Задайте параметры популяции и нажмите «Запустить», чтобы увидеть изменение частот по поколениям.</p><div className="empty-hint"><span>✓</span> Начните с идеальной популяции без факторов</div></div>}
+        {!result && !loading && <div className="empty-state">
+          <div className="empty-chart"><svg viewBox="0 0 100 72" fill="none" aria-hidden="true"><path d="M10 7v52h80" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/><path d="M17 46 35 33l17 5 17-20 17 6" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="69" cy="18" r="4" fill="currentColor"/></svg></div>
+          <h2>Здесь появятся результаты</h2>
+          <p>Задайте параметры популяции и нажмите «Запустить», чтобы увидеть изменение частот по поколениям.</p>
+          {!inputs.migrationEnabled && <div className="empty-hint"><span>✓</span> Начните с идеальной популяции без факторов</div>}
+        </div>}
         {loading && !result && <div className="empty-state" role="status"><CircularProgress size={36} /><h2>Выполняем расчет</h2><p>Передаем параметры на сервер.</p></div>}
         {result && last && <>
           {resultIsStale && <div className="stale-notice">Параметры изменены. Запустите расчет, чтобы обновить результаты.</div>}
@@ -184,14 +234,14 @@ export default function App() {
           <div className="result-content">
             <div className="result-tabs" role="tablist" aria-label="Данные расчета">{TABS.map((item) => <button role="tab" aria-selected={tab === item.id} key={item.id} className={tab === item.id ? 'selected' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
             {tab === 'table' ? <ResultsTable rows={result.rows} /> : <ResultsChart rows={result.rows} tab={tab} />}
-            <div className="parameters-summary"><strong>Параметры расчета:</strong> N = {integer.format(result.params.n)}; p₀ = {display(result.params.p0)}; T = {integer.format(result.params.generations)}; факторы выключены</div>
+            <div className="parameters-summary"><strong>Параметры расчета:</strong> N = {integer.format(result.params.n)}; p₀ = {display(result.params.p0)}; T = {integer.format(result.params.generations)}; {migration ? <>миграция (m = {display(migration.m)}, pₘ = {display(migration.p_m)})</> : 'факторы выключены'}</div>
           </div>
         </>}
       </section>
     </main>
     <footer className="footer">Учебная модель · Один локус, два аллеля, неперекрывающиеся поколения</footer>
     <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="sm" fullWidth>
-      <DialogTitle>Справка</DialogTitle><DialogContent><Box component="p">В идеальной популяции частоты аллелей остаются постоянными. Для частоты аллеля A, равной p, частота a равна q = 1 − p.</Box><Box component="p">Ожидаемые доли генотипов: AA = p², Aa = 2pq, aa = q². Гетерозиготность H = 2pq.</Box><Box component="p">На первом этапе доступен расчет без факторов. Значения являются результатом учебной модели.</Box></DialogContent><DialogActions><Button onClick={() => setHelpOpen(false)}>Понятно</Button></DialogActions>
+      <DialogTitle>Справка</DialogTitle><DialogContent><Box component="p">В идеальной популяции частоты аллелей остаются постоянными. Для частоты аллеля A, равной p, частота a равна q = 1 − p.</Box><Box component="p">Ожидаемые доли генотипов: AA = p², Aa = 2pq, aa = q². Гетерозиготность H = 2pq.</Box><Box component="p">При миграции частота аллеля A в следующем поколении равна (1 − m)p + m·pₘ. Здесь m — доля мигрантов, pₘ — частота аллеля A среди них.</Box></DialogContent><DialogActions><Button onClick={() => setHelpOpen(false)}>Понятно</Button></DialogActions>
     </Dialog>
   </div>;
 }

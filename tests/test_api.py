@@ -21,6 +21,31 @@ def test_ideal_run_via_http():
 
 
 @pytest.mark.parametrize(
+    ("m", "expected_frequencies"),
+    [(0, (0.3, 0.3, 0.3)), (0.1, (0.3, 0.35, 0.395)), (1, (0.3, 0.8, 0.8))],
+)
+def test_migration_uses_previous_generation_frequency(m, expected_frequencies):
+    params = {"n": 500, "p0": 0.3, "generations": 2, "migration": {"m": m, "p_m": 0.8}}
+    response = client.post("/api/simulate", json=params)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["params"] == params
+    assert [row["t"] for row in result["rows"]] == [0, 1, 2]
+    assert [row["p"] for row in result["rows"]] == pytest.approx(expected_frequencies)
+    for row, p in zip(result["rows"], expected_frequencies):
+        q = 1 - p
+        assert (row["q"], row["f_AA"], row["f_Aa"], row["f_aa"], row["h"]) == pytest.approx(
+            (q, p**2, 2 * p * q, q**2, 2 * p * q)
+        )
+
+
+@pytest.mark.parametrize("migration", [{"m": -0.1, "p_m": 0.8}, {"m": 0.1, "p_m": 1.1}, {"m": 0.1}])
+def test_invalid_migration_returns_422(migration):
+    response = client.post("/api/simulate", json={"n": 500, "p0": 0.3, "generations": 2, "migration": migration})
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
     "data",
     [
         {"n": 1, "p0": 0.5, "generations": 10},
