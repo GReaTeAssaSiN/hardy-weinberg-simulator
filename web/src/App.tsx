@@ -12,7 +12,9 @@ import {
 import BatchScreen from './BatchScreen';
 import ComparisonScreen, { type ComparisonMetric } from './ComparisonScreen';
 import ChiSquareResults, { displayChiSquare } from './ChiSquareResults';
+import ExamplesScreen from './ExamplesScreen';
 import ResultsExport from './ResultsExport';
+import SampleCheckScreen from './SampleCheckScreen';
 import { loadScenarios, MAX_SCENARIOS, storeScenarios } from './savedScenarios';
 import { describeFactors, display, generationTicks, Info, integer, oneDecimal, ParamLabel, parseDecimal, parseSeed, SEED_ERROR } from './simulationUi';
 import type { AdditionalFactors, GenerationRow, SimulationParams, SimulationResult } from './types';
@@ -35,6 +37,19 @@ const INITIAL: Inputs = {
   inbreedingEnabled: false, f: '0,25',
   driftEnabled: false, seed: '42',
 };
+
+function inputsFromExample({ n, p0, generations, migration, selection, inbreeding, drift }: SimulationParams): Inputs {
+  const decimal = (value: number) => String(value).replace('.', ',');
+  return {
+    ...INITIAL, n: String(n), p0: decimal(p0), generations: String(generations),
+    ...(migration && { migrationEnabled: true, m: decimal(migration.m), p_m: decimal(migration.p_m) }),
+    ...(selection && { selectionEnabled: true, w11: decimal(selection.w11), w12: decimal(selection.w12),
+      w22: decimal(selection.w22), target_p: decimal(selection.target_p) }),
+    ...(inbreeding && { inbreedingEnabled: true, f: decimal(inbreeding.f) }),
+    ...(drift && { driftEnabled: true, seed: drift.seed === undefined ? '' : String(drift.seed) }),
+  };
+}
+
 const FITNESS_FIELDS = [['w11', 'w₁₁', 'AA'], ['w12', 'w₁₂', 'Aa'], ['w22', 'w₂₂', 'aa']] as const;
 const TABS: { id: TabName; label: string }[] = [
   { id: 'alleles', label: 'Частоты аллелей' },
@@ -175,7 +190,7 @@ function ResultsTable({ rows, threshold }: { rows: GenerationRow[]; threshold?: 
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<'single' | 'comparison' | 'batch'>('single');
+  const [screen, setScreen] = useState<'single' | 'comparison' | 'batch' | 'examples' | 'sample'>('single');
   const [batchStart, setBatchStart] = useState<{ revision: number; params?: SimulationParams }>({ revision: 0 });
   const [scenarios, setScenarios] = useState(loadScenarios);
   const [comparisonMetric, setComparisonMetric] = useState<ComparisonMetric>('p');
@@ -247,11 +262,9 @@ export default function App() {
     </label>;
   }
 
-  async function run() {
-    setAttempted(true);
+  async function runSimulation(params: SimulationParams) {
+    if (loading) return;
     setRequestError('');
-    if (!validation.params || loading) return;
-    const params = validation.params;
     setLoading(true);
     try {
       const response = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: AbortSignal.timeout(15_000) });
@@ -284,6 +297,21 @@ export default function App() {
     } finally { setLoading(false); }
   }
 
+  function run() {
+    setAttempted(true);
+    setRequestError('');
+    if (validation.params) void runSimulation(validation.params);
+  }
+
+  function openExample(params: SimulationParams) {
+    if (loading) return;
+    setInputs(inputsFromExample(params));
+    setAttempted(false);
+    setResult(null);
+    setScreen('single');
+    void runSimulation(params);
+  }
+
   function reset() { setInputs(INITIAL); setResult(null); setAttempted(false); setRequestError(''); setTab('alleles'); }
   const last = result?.rows[result.rows.length - 1];
   const maxDelta = result ? Math.max(...result.rows.map((row) => Math.abs(row.p - result.params.p0))) : 0;
@@ -303,6 +331,10 @@ export default function App() {
           aria-current={screen === 'comparison' ? 'page' : undefined} onClick={() => setScreen('comparison')}>Сравнение сценариев</button>
         <button type="button" className={screen === 'batch' ? 'nav-active' : undefined}
           aria-current={screen === 'batch' ? 'page' : undefined} onClick={() => setScreen('batch')}>Многократные прогоны</button>
+        <button type="button" className={screen === 'examples' ? 'nav-active' : undefined}
+          aria-current={screen === 'examples' ? 'page' : undefined} onClick={() => setScreen('examples')}>Примеры</button>
+        <button type="button" className={screen === 'sample' ? 'nav-active' : undefined}
+          aria-current={screen === 'sample' ? 'page' : undefined} onClick={() => setScreen('sample')}>Проверка выборки</button>
         <button type="button" onClick={() => setHelpOpen(true)}>Справка</button>
       </nav>
       <div className="server-state"><span className={`status-dot ${server}`} />{server === 'checking' ? 'Проверяем сервер' : server === 'online' ? 'Сервер доступен' : 'Сервер недоступен'}</div>
@@ -438,6 +470,8 @@ export default function App() {
       onReturn={() => setScreen('single')} />}
     <BatchScreen key={batchStart.revision} active={screen === 'batch'} initialParams={batchStart.params}
       availableFactors={validation.factors} onServerState={(online) => setServer(online ? 'online' : 'offline')} />
+    {screen === 'examples' && <ExamplesScreen onOpen={openExample} loading={loading} />}
+    <SampleCheckScreen active={screen === 'sample'} onServerState={(online) => setServer(online ? 'online' : 'offline')} />
     <footer className="footer">Учебная модель · Один локус, два аллеля, неперекрывающиеся поколения</footer>
     <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="sm" fullWidth>
       <DialogTitle>Справка</DialogTitle>
@@ -448,6 +482,7 @@ export default function App() {
         <Box component="p">При отборе приспособленность определяет долю выживших для каждого генотипа. Если включена миграция, отбор применяется после нее.</Box>
         <Box component="p">При инбридинге частоты аллелей остаются прежними, а доля гетерозигот Aa равна 2pq(1 − F). График гетерозиготности сравнивает ее с ожидаемой долей 2pq при случайном скрещивании.</Box>
         <Box component="p">При дрейфе частота меняется случайно: в каждом поколении выбираются 2N копий аллелей. При тех же параметрах и зерне расчет повторяется. Теория описывает среднее для дрейфа без других факторов.</Box>
+        <Box component="p">Критерий χ² сравнивает наблюдаемые или расчетные численности с ожидаемыми по формулам Np², 2Npq и Nq². Для наблюдаемых данных откройте «Проверка выборки».</Box>
       </DialogContent>
       <DialogActions><Button onClick={() => setHelpOpen(false)}>Понятно</Button></DialogActions>
     </Dialog>
