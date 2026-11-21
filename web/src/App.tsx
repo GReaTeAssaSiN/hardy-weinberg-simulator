@@ -3,13 +3,15 @@ import type { ReactNode } from 'react';
 import {
   Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent,
   DialogTitle, Switch, Table, TableBody, TableCell, TableContainer, TableHead,
-  TablePagination, TableRow, TextField, Tooltip,
+  TablePagination, TableRow, TextField,
 } from '@mui/material';
 import {
   CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip as ChartTooltip,
   XAxis, YAxis,
 } from 'recharts';
-import type { GenerationRow, SimulationParams, SimulationResult } from './types';
+import BatchScreen from './BatchScreen';
+import { describeFactors, display, generationTicks, Info, integer, oneDecimal, ParamLabel, parseDecimal, parseSeed, SEED_ERROR } from './simulationUi';
+import type { AdditionalFactors, GenerationRow, SimulationParams, SimulationResult } from './types';
 
 type InputField = 'n' | 'p0' | 'generations' | 'm' | 'p_m' | 'w11' | 'w12' | 'w22' | 'target_p' | 'f' | 'seed';
 type Inputs = Record<InputField, string> & {
@@ -29,7 +31,6 @@ const INITIAL: Inputs = {
   inbreedingEnabled: false, f: '0,25',
   driftEnabled: false, seed: '42',
 };
-const MAX_SEED = 2 ** 32 - 1;
 const FITNESS_FIELDS = [['w11', 'w₁₁', 'AA'], ['w12', 'w₁₂', 'Aa'], ['w22', 'w₂₂', 'aa']] as const;
 const TABS: { id: TabName; label: string }[] = [
   { id: 'alleles', label: 'Частоты аллелей' },
@@ -42,24 +43,26 @@ const Y_AXIS_LABELS: Record<ChartTab, string> = {
   genotypes: 'Доля генотипа',
   heterozygosity: 'Гетерозиготность',
 };
-const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 });
-const integer = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
-const oneDecimal = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
-const display = (value: number) => number.format(value);
-
-function parseDecimal(value: string): number {
-  const normalized = value.trim().replace(',', '.');
-  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return NaN;
-  return Number(normalized);
-}
-
-function validate(inputs: Inputs): { params?: SimulationParams; errors: FieldErrors } {
+function validate(inputs: Inputs): { params?: SimulationParams; errors: FieldErrors; factors: AdditionalFactors | null } {
   const errors: FieldErrors = {};
   function readUnit(field: InputField) {
     const value = parseDecimal(inputs[field]);
     if (!Number.isFinite(value) || value < 0 || value > 1) errors[field] = 'Введите число от 0 до 1';
     return value;
   }
+  const factors: AdditionalFactors = {};
+  if (inputs.migrationEnabled) {
+    factors.migration = { m: readUnit('m'), p_m: readUnit('p_m') };
+  }
+  if (inputs.selectionEnabled) {
+    factors.selection = {
+      w11: readUnit('w11'), w12: readUnit('w12'), w22: readUnit('w22'), target_p: readUnit('target_p'),
+    };
+  }
+  if (inputs.inbreedingEnabled) {
+    factors.inbreeding = { f: readUnit('f') };
+  }
+  const validFactors = Object.keys(errors).length ? null : factors;
   const n = parseDecimal(inputs.n);
   const p0 = readUnit('p0');
   const generations = parseDecimal(inputs.generations);
@@ -67,35 +70,13 @@ function validate(inputs: Inputs): { params?: SimulationParams; errors: FieldErr
   if (!Number.isInteger(generations) || generations < 1 || generations > 1_000) {
     errors.generations = 'Введите целое число от 1 до 1 000';
   }
-  const params: SimulationParams = { n, p0, generations };
-  if (inputs.migrationEnabled) {
-    params.migration = { m: readUnit('m'), p_m: readUnit('p_m') };
-  }
-  if (inputs.selectionEnabled) {
-    params.selection = {
-      w11: readUnit('w11'), w12: readUnit('w12'), w22: readUnit('w22'), target_p: readUnit('target_p'),
-    };
-  }
-  if (inputs.inbreedingEnabled) {
-    params.inbreeding = { f: readUnit('f') };
-  }
+  const params: SimulationParams = { n, p0, generations, ...factors };
   if (inputs.driftEnabled) {
-    const rawSeed = inputs.seed.trim();
-    const seed = Number(rawSeed);
-    if (rawSeed && (!/^\d+$/.test(rawSeed) || seed > MAX_SEED)) {
-      errors.seed = 'Введите целое число от 0 до 4 294 967 295';
-    }
-    params.drift = rawSeed ? { seed } : {};
+    const seed = parseSeed(inputs.seed);
+    if (Number.isNaN(seed)) errors.seed = SEED_ERROR;
+    params.drift = seed === undefined ? {} : { seed };
   }
-  return Object.keys(errors).length ? { errors } : { errors, params };
-}
-
-function Info({ text }: { text: string }) {
-  return <Tooltip title={text} arrow><span className="info" aria-label={text} tabIndex={0}>?</span></Tooltip>;
-}
-
-function ParamLabel({ label, info }: { label: string; info: string }) {
-  return <span className="field-label">{label} <Info text={info} /></span>;
+  return { errors, factors: validFactors, params: Object.keys(errors).length ? undefined : params };
 }
 
 function FactorCard({ name, symbols, enabled, onToggle, children }: {
@@ -116,10 +97,6 @@ function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding, sh
   targetP?: number; targetGeneration?: number; showInbreeding: boolean; showDrift: boolean;
 }) {
   const lastGeneration = rows.at(-1)?.t ?? 0;
-  const intervals = Math.min(5, lastGeneration);
-  const generationTicks = intervals > 0
-    ? Array.from({ length: intervals + 1 }, (_, index) => Math.round(index * lastGeneration / intervals))
-    : [0];
   const homozygotesOverlap = tab === 'genotypes' && rows.length > 0 && rows.every((row) => row.f_AA === row.f_aa);
   const series: { key: keyof GenerationRow; name: string; color: string; dash?: string }[] = tab === 'alleles'
     ? [{ key: 'p', name: 'p (A)', color: '#2161eb' }, { key: 'q', name: 'q (a)', color: '#e57925' }]
@@ -139,7 +116,7 @@ function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding, sh
       <ResponsiveContainer width="100%" height="100%" minWidth={0}>
         <LineChart data={rows} margin={{ top: 12, right: 18, bottom: 14, left: 0 }}>
           <CartesianGrid stroke="#e7ebef" vertical={false} />
-          <XAxis dataKey="t" ticks={generationTicks} interval={0} tick={{ fontSize: 12, fill: '#8290a0' }}
+          <XAxis dataKey="t" ticks={generationTicks(lastGeneration)} interval={0} tick={{ fontSize: 12, fill: '#8290a0' }}
             tickLine={false} axisLine={{ stroke: '#d6dee5' }}
             label={{ value: 'Поколение', position: 'insideBottom', offset: -7, fontSize: 12, fill: '#8290a0' }} />
           <YAxis domain={[0, 1]} tickCount={6} tickFormatter={display} tick={{ fontSize: 12, fill: '#8290a0' }}
@@ -186,6 +163,8 @@ function ResultsTable({ rows }: { rows: GenerationRow[] }) {
 }
 
 export default function App() {
+  const [screen, setScreen] = useState<'single' | 'batch'>('single');
+  const [batchStart, setBatchStart] = useState<{ revision: number; params?: SimulationParams }>({ revision: 0 });
   const [inputs, setInputs] = useState<Inputs>(INITIAL);
   const [attempted, setAttempted] = useState(false);
   const [result, setResult] = useState<SimulationResult | null>(null);
@@ -279,13 +258,24 @@ export default function App() {
   const last = result?.rows[result.rows.length - 1];
   const maxDelta = result ? Math.max(...result.rows.map((row) => Math.abs(row.p - result.params.p0))) : 0;
 
+  function openBatchFromResult(params: SimulationParams) {
+    setBatchStart((previous) => ({ revision: previous.revision + 1, params }));
+    setScreen('batch');
+  }
+
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand"><div className="brand-mark">HW</div><div><strong>Харди — Вайнберг</strong><span>моделирование генетического равновесия</span></div></div>
-      <nav className="topnav" aria-label="Разделы"><span className="nav-active">Моделирование</span><button type="button" onClick={() => setHelpOpen(true)}>Справка</button></nav>
+      <nav className="topnav" aria-label="Разделы">
+        <button type="button" className={screen === 'single' ? 'nav-active' : undefined}
+          aria-current={screen === 'single' ? 'page' : undefined} onClick={() => setScreen('single')}>Моделирование</button>
+        <button type="button" className={screen === 'batch' ? 'nav-active' : undefined}
+          aria-current={screen === 'batch' ? 'page' : undefined} onClick={() => setScreen('batch')}>Многократные прогоны</button>
+        <button type="button" onClick={() => setHelpOpen(true)}>Справка</button>
+      </nav>
       <div className="server-state"><span className={`status-dot ${server}`} />{server === 'checking' ? 'Проверяем сервер' : server === 'online' ? 'Сервер доступен' : 'Сервер недоступен'}</div>
     </header>
-    <main className="workspace">
+    {screen === 'single' && <main className="workspace">
       <aside className="panel parameters-panel" aria-label="Параметры моделирования">
         <div className="panel-heading"><span className="eyebrow">Параметры популяции</span><Info text="Параметры начальной популяции и длительность расчета." /></div>
         <div className="fields-grid">
@@ -386,16 +376,17 @@ export default function App() {
             </div>}
             <div className="parameters-summary">
               <strong>Параметры расчета:</strong> N = {integer.format(result.params.n)}; p₀ = {display(result.params.p0)}; T = {integer.format(result.params.generations)}
-              {migration && <>; миграция (m = {display(migration.m)}, pₘ = {display(migration.p_m)})</>}
-              {selection && <>; отбор (w₁₁ = {display(selection.w11)}, w₁₂ = {display(selection.w12)}, w₂₂ = {display(selection.w22)}, p* = {display(selection.target_p)})</>}
-              {inbreeding && <>; инбридинг (F = {display(inbreeding.f)})</>}
+              {describeFactors(result.params).map((factor) => ` · ${factor}`)}
               {drift && <>; дрейф (зерно {drift.seed})</>}
               {resultFactors.length === 0 && '; факторы выключены'}
             </div>
+            {!resultIsStale && <Button className="batch-link" onClick={() => openBatchFromResult(result.params)}>Оценить разброс</Button>}
           </div>
         </>}
       </section>
-    </main>
+    </main>}
+    <BatchScreen key={batchStart.revision} active={screen === 'batch'} initialParams={batchStart.params}
+      availableFactors={validation.factors} onServerState={(online) => setServer(online ? 'online' : 'offline')} />
     <footer className="footer">Учебная модель · Один локус, два аллеля, неперекрывающиеся поколения</footer>
     <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="sm" fullWidth>
       <DialogTitle>Справка</DialogTitle>
