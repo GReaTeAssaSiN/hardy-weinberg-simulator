@@ -4,6 +4,7 @@ export type SimulationParams = {
   generations: number;
   migration?: { m: number; p_m: number };
   selection?: { w11: number; w12: number; w22: number; target_p: number };
+  inbreeding?: { f: number };
 };
 
 export type GenerationRow = {

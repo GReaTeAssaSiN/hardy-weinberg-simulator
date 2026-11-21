@@ -2,8 +2,6 @@
 
 from dataclasses import dataclass
 
-from core.ideal import Generation, IdealParameters, generation_at_frequency
-
 
 @dataclass(frozen=True, slots=True)
 class MigrationParameters:
@@ -17,12 +15,3 @@ class MigrationParameters:
 
     def apply(self, p: float) -> float:
         return (1 - self.m) * p + self.m * self.p_m
-
-
-def simulate_migration(params: IdealParameters, migration: MigrationParameters) -> list[Generation]:
-    p = float(params.initial_frequency)
-    rows = [generation_at_frequency(0, p)]
-    for t in range(1, params.generations + 1):
-        p = migration.apply(p)
-        rows.append(generation_at_frequency(t, p))
-    return rows

@@ -108,4 +108,39 @@ describe('моделирование популяции', () => {
     expect(screen.getByText(/Параметры изменены/)).toBeTruthy();
     expect(screen.getByText('Достижение p* = 0,95')).toBeTruthy();
   });
+
+  it('проверяет F и показывает отдельно фактическую долю Aa и ожидаемую H', async () => {
+    const params = { n: 500, p0: 0.5, generations: 1, inbreeding: { f: 0.25 } };
+    const rows = [
+      { t: 0, p: 0.5, q: 0.5, f_AA: 0.25, f_Aa: 0.5, f_aa: 0.25, h: 0.5 },
+      { t: 1, p: 0.5, q: 0.5, f_AA: 0.3125, f_Aa: 0.375, f_aa: 0.3125, h: 0.5 },
+    ];
+    const fetchMock = vi.fn().mockImplementation((url) => Promise.resolve(url === '/health'
+      ? { ok: true }
+      : { ok: true, json: async () => ({ params, rows }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    fireEvent.click(screen.getByRole('switch', { name: 'Неслучайное скрещивание' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Поколений T' }), { target: { value: '1' } });
+    const factor = screen.getByRole('textbox', { name: 'Коэффициент инбридинга F' });
+    const runButton = screen.getByRole('button', { name: /запустить/i });
+    fireEvent.change(factor, { target: { value: '1,1' } });
+    fireEvent.click(runButton);
+    expect(screen.getByText('Введите число от 0 до 1')).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/simulate')).toBe(false);
+
+    fireEvent.change(factor, { target: { value: '0,25' } });
+    fireEvent.click(runButton);
+    await screen.findByText('0,625');
+    const call = fetchMock.mock.calls.find(([url]) => url === '/api/simulate');
+    expect(JSON.parse(call![1].body)).toEqual(params);
+    expect(screen.getByText('0,375')).toBeTruthy();
+    expect(screen.getByText('ожидаемая H = 2pq: 0,5')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Генотипы' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('tab', { name: 'Гетерозиготность' }));
+    expect(screen.getByText('Доля Aa при заданном F')).toBeTruthy();
+    expect(screen.getByText('Ожидаемая H = 2pq')).toBeTruthy();
+    fireEvent.change(factor, { target: { value: '1' } });
+    expect(screen.getByText(/Параметры изменены/)).toBeTruthy();
+  });
 });

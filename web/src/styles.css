@@ -42,6 +42,7 @@ button { font: inherit; }
 .factor-fields .field-label { white-space: normal; }
 .selection-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .selection-target-field { grid-column: 1 / -1; }
+.inbreeding-fields { grid-template-columns: 1fr; }
 .model-note { display: flex; gap: 9px; margin-top: 16px; padding: 12px; color: #6c7d8d; background: #f4f7f8; border-radius: 8px; font-size: 11px; line-height: 1.5; }
 .model-note strong { color: #485e6a; font-weight: 700; }
 .note-icon { flex: 0 0 auto; display: grid; place-items: center; width: 17px; height: 17px; color: #418b85; border: 1px solid #a8d0ca; border-radius: 50%; font-size: 11px; font-weight: 700; }
