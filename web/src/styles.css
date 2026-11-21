@@ -31,11 +31,15 @@ button { font: inherit; }
 .fields-grid .Mui-disabled { background: #f0f3f5; }
 .fields-grid .MuiFormHelperText-root { margin-left: 0; line-height: 1.3; font-size: 11px; }
 .factors-heading { margin: 27px 0 12px; }
-.section-hint { color: #a0acb8; font-size: 10px; font-weight: 600; }
 .factor-list { display: grid; gap: 8px; }
 .factor { min-height: 49px; padding: 3px 12px 3px 3px; display: flex; align-items: center; border: 1px solid #e2e8ed; border-radius: 9px; color: #7c8a98; font-size: 12px; font-weight: 650; }
 .factor .MuiSwitch-root { margin-right: 3px; }
 .factor small { margin-left: auto; padding-left: 6px; color: #b0bac4; font-size: 11px; white-space: nowrap; }
+.factor-card { border: 1px solid #e2e8ed; border-radius: 9px; }
+.factor-card-active { border-color: #acd7d2; background: #f8fcfb; }
+.factor-toggle { min-height: 47px; border: 0; color: #202d3d; cursor: pointer; }
+.migration-fields { margin-top: 0; padding: 10px 12px 12px; border-top: 1px dashed #dfe5ea; }
+.migration-fields .field-label { white-space: normal; }
 .model-note { display: flex; gap: 9px; margin-top: 16px; padding: 12px; color: #6c7d8d; background: #f4f7f8; border-radius: 8px; font-size: 11px; line-height: 1.5; }
 .model-note strong { color: #485e6a; font-weight: 700; }
 .note-icon { flex: 0 0 auto; display: grid; place-items: center; width: 17px; height: 17px; color: #418b85; border: 1px solid #a8d0ca; border-radius: 50%; font-size: 11px; font-weight: 700; }

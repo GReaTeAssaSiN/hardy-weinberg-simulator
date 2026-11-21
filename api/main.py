@@ -1,4 +1,4 @@
-"""Первый рабочий API: моделирование идеальной популяции."""
+"""API симулятора: идеальная популяция и миграция."""
 
 from dataclasses import asdict
 from typing import Annotated
@@ -7,6 +7,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.ideal import IdealParameters, simulate_ideal
+from core.migration import MigrationParameters, simulate_migration
+
+
+class MigrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    m: Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False, description="Доля мигрантов")]
+    p_m: Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False, description="Частота A у мигрантов")]
 
 
 class SimulationRequest(BaseModel):
@@ -15,6 +23,7 @@ class SimulationRequest(BaseModel):
     n: Annotated[int, Field(strict=True, ge=2, le=100_000, description="Численность популяции")]
     p0: Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False, description="Начальная частота A")]
     generations: Annotated[int, Field(strict=True, ge=1, le=1_000, description="Число поколений")]
+    migration: MigrationRequest | None = None
 
 
 class GenerationRow(BaseModel):
@@ -35,7 +44,7 @@ class SimulationResult(BaseModel):
 app = FastAPI(
     title="Симулятор Харди — Вайнберга",
     version="0.1.0",
-    description="Первый этап: идеальная популяция без факторов.",
+    description="Моделирование идеальной популяции и влияния миграции.",
 )
 
 
@@ -44,7 +53,12 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/simulate", response_model=SimulationResult)
+@app.post("/api/simulate", response_model=SimulationResult, response_model_exclude_none=True)
 def simulate(params: SimulationRequest) -> SimulationResult:
-    result = simulate_ideal(IdealParameters(params.n, params.p0, params.generations))
+    population = IdealParameters(params.n, params.p0, params.generations)
+    if params.migration is None:
+        result = simulate_ideal(population)
+    else:
+        migration = MigrationParameters(params.migration.m, params.migration.p_m)
+        result = simulate_migration(population, migration)
     return SimulationResult(params=params, rows=[GenerationRow(**asdict(row)) for row in result])

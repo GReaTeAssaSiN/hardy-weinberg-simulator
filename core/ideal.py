@@ -36,12 +36,14 @@ class Generation:
     h: float
 
 
+def generation_at_frequency(t: int, p: float) -> Generation:
+    """Вычислить доли генотипов при случайном скрещивании."""
+    q = 1.0 - p
+    aa, hetero, recessive = p * p, 2.0 * p * q, q * q
+    return Generation(t, p, q, aa, hetero, recessive, hetero)
+
+
 def simulate_ideal(params: IdealParameters) -> list[Generation]:
     """Вернуть поколения 0..T для заданной начальной частоты аллеля A."""
     p = float(params.initial_frequency)
-    q = 1.0 - p
-    aa, hetero, recessive = p * p, 2.0 * p * q, q * q
-    return [
-        Generation(t, p, q, aa, hetero, recessive, hetero)
-        for t in range(params.generations + 1)
-    ]
+    return [generation_at_frequency(t, p) for t in range(params.generations + 1)]
