@@ -10,7 +10,9 @@ import {
   XAxis, YAxis,
 } from 'recharts';
 import BatchScreen from './BatchScreen';
+import ComparisonScreen, { type ComparisonMetric } from './ComparisonScreen';
 import ResultsExport from './ResultsExport';
+import { loadScenarios, MAX_SCENARIOS, storeScenarios } from './savedScenarios';
 import { describeFactors, display, generationTicks, Info, integer, oneDecimal, ParamLabel, parseDecimal, parseSeed, SEED_ERROR } from './simulationUi';
 import type { AdditionalFactors, GenerationRow, SimulationParams, SimulationResult } from './types';
 
@@ -164,8 +166,10 @@ function ResultsTable({ rows }: { rows: GenerationRow[] }) {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<'single' | 'batch'>('single');
+  const [screen, setScreen] = useState<'single' | 'comparison' | 'batch'>('single');
   const [batchStart, setBatchStart] = useState<{ revision: number; params?: SimulationParams }>({ revision: 0 });
+  const [scenarios, setScenarios] = useState(loadScenarios);
+  const [comparisonMetric, setComparisonMetric] = useState<ComparisonMetric>('p');
   const [inputs, setInputs] = useState<Inputs>(INITIAL);
   const [attempted, setAttempted] = useState(false);
   const [result, setResult] = useState<SimulationResult | null>(null);
@@ -206,6 +210,21 @@ export default function App() {
     fetch('/health', { signal: controller.signal }).then((response) => setServer(response.ok ? 'online' : 'offline')).catch(() => { if (!controller.signal.aborted) setServer('offline'); });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => { storeScenarios(scenarios); }, [scenarios]);
+
+  const resultWasSaved = scenarios.some((scenario) => scenario.result === result);
+  const comparisonIsFull = scenarios.length >= MAX_SCENARIOS;
+
+  function saveCurrentScenario() {
+    if (!result) return;
+    setScenarios((previous) => {
+      if (previous.some((scenario) => scenario.result === result)) return previous;
+      const ids = Array.from({ length: MAX_SCENARIOS }, (_, index) => index + 1);
+      const freeId = ids.find((id) => !previous.some((scenario) => scenario.id === id));
+      return freeId === undefined ? previous : [...previous, { id: freeId, visible: true, result }];
+    });
+  }
 
   function update(field: InputField, value: string) { setInputs((previous) => ({ ...previous, [field]: value })); }
 
@@ -270,6 +289,8 @@ export default function App() {
       <nav className="topnav" aria-label="Разделы">
         <button type="button" className={screen === 'single' ? 'nav-active' : undefined}
           aria-current={screen === 'single' ? 'page' : undefined} onClick={() => setScreen('single')}>Моделирование</button>
+        <button type="button" className={screen === 'comparison' ? 'nav-active' : undefined}
+          aria-current={screen === 'comparison' ? 'page' : undefined} onClick={() => setScreen('comparison')}>Сравнение сценариев</button>
         <button type="button" className={screen === 'batch' ? 'nav-active' : undefined}
           aria-current={screen === 'batch' ? 'page' : undefined} onClick={() => setScreen('batch')}>Многократные прогоны</button>
         <button type="button" onClick={() => setHelpOpen(true)}>Справка</button>
@@ -333,6 +354,10 @@ export default function App() {
           <div><span className="eyebrow">Моделирование</span><h1>Результат моделирования</h1></div>
           <div className="results-header-actions">
             <span className="mode-badge"><span />{mode}</span>
+            {result && <Button variant="outlined" color="inherit" size="small" className="result-action"
+              disabled={loading || resultWasSaved || comparisonIsFull} onClick={saveCurrentScenario}>
+              {resultWasSaved ? 'В сравнении' : comparisonIsFull ? 'Сравнение заполнено' : 'В сравнение'}
+            </Button>}
             {result && <ResultsExport result={result} disabled={loading} />}
           </div>
         </div>
@@ -392,6 +417,11 @@ export default function App() {
         </>}
       </section>
     </main>}
+    {screen === 'comparison' && <ComparisonScreen scenarios={scenarios} metric={comparisonMetric} onMetric={setComparisonMetric}
+      onToggle={(id, visible) => setScenarios((previous) =>
+        previous.map((scenario) => scenario.id === id ? { ...scenario, visible } : scenario))}
+      onRemove={(id) => setScenarios((previous) => previous.filter((scenario) => scenario.id !== id))}
+      onReturn={() => setScreen('single')} />}
     <BatchScreen key={batchStart.revision} active={screen === 'batch'} initialParams={batchStart.params}
       availableFactors={validation.factors} onServerState={(online) => setServer(online ? 'online' : 'offline')} />
     <footer className="footer">Учебная модель · Один локус, два аллеля, неперекрывающиеся поколения</footer>

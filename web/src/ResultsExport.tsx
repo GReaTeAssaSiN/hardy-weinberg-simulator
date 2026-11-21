@@ -61,7 +61,7 @@ export default function ResultsExport({ result, disabled = false }: { result: Re
   }
 
   return <>
-    <Button className="export-button" variant="outlined" color="inherit" size="small" disabled={disabled}
+    <Button className="result-action" variant="outlined" color="inherit" size="small" disabled={disabled}
       onClick={() => { setError(''); setSnapshot(result); }}>Экспорт</Button>
     <Dialog open={Boolean(snapshot)} onClose={() => { if (!loading) setSnapshot(null); }}
       aria-labelledby="export-title" maxWidth="sm" fullWidth>
