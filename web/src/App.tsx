@@ -1,23 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent,
   DialogTitle, Switch, Table, TableBody, TableCell, TableContainer, TableHead,
   TablePagination, TableRow, TextField, Tooltip,
 } from '@mui/material';
 import {
-  CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as ChartTooltip,
+  CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip as ChartTooltip,
   XAxis, YAxis,
 } from 'recharts';
 import type { GenerationRow, SimulationParams, SimulationResult } from './types';
 
-type InputField = 'n' | 'p0' | 'generations' | 'm' | 'p_m';
-type Inputs = Record<InputField, string> & { migrationEnabled: boolean };
+type InputField = 'n' | 'p0' | 'generations' | 'm' | 'p_m' | 'w11' | 'w12' | 'w22' | 'target_p';
+type Inputs = Record<InputField, string> & { migrationEnabled: boolean; selectionEnabled: boolean };
 type FieldErrors = Partial<Record<InputField, string>>;
 type TabName = 'alleles' | 'genotypes' | 'heterozygosity' | 'table';
 
-const INITIAL: Inputs = { n: '500', p0: '0,5', generations: '100', migrationEnabled: false, m: '0,1', p_m: '0,8' };
+const INITIAL: Inputs = {
+  n: '500', p0: '0,5', generations: '100',
+  migrationEnabled: false, m: '0,1', p_m: '0,8',
+  selectionEnabled: false, w11: '1', w12: '1', w22: '0,8', target_p: '0,9',
+};
+const FITNESS_FIELDS = [['w11', 'w₁₁', 'AA'], ['w12', 'w₁₂', 'Aa'], ['w22', 'w₂₂', 'aa']] as const;
 const UPCOMING_FACTORS = [
-  ['Отбор', 'w₁₁, w₁₂, w₂₂'],
   ['Неслучайное скрещивание', 'F'],
   ['Генетический дрейф', 'N'],
 ];
@@ -39,21 +44,26 @@ function parseDecimal(value: string): number {
 
 function validate(inputs: Inputs): { params?: SimulationParams; errors: FieldErrors } {
   const errors: FieldErrors = {};
+  function readUnit(field: InputField) {
+    const value = parseDecimal(inputs[field]);
+    if (!Number.isFinite(value) || value < 0 || value > 1) errors[field] = 'Введите число от 0 до 1';
+    return value;
+  }
   const n = parseDecimal(inputs.n);
-  const p0 = parseDecimal(inputs.p0);
+  const p0 = readUnit('p0');
   const generations = parseDecimal(inputs.generations);
   if (!Number.isInteger(n) || n < 2 || n > 100_000) errors.n = 'Введите целое число от 2 до 100 000';
-  if (!Number.isFinite(p0) || p0 < 0 || p0 > 1) errors.p0 = 'Введите число от 0 до 1';
   if (!Number.isInteger(generations) || generations < 1 || generations > 1_000) {
     errors.generations = 'Введите целое число от 1 до 1 000';
   }
   const params: SimulationParams = { n, p0, generations };
   if (inputs.migrationEnabled) {
-    const m = parseDecimal(inputs.m);
-    const p_m = parseDecimal(inputs.p_m);
-    if (!Number.isFinite(m) || m < 0 || m > 1) errors.m = 'Введите число от 0 до 1';
-    if (!Number.isFinite(p_m) || p_m < 0 || p_m > 1) errors.p_m = 'Введите число от 0 до 1';
-    params.migration = { m, p_m };
+    params.migration = { m: readUnit('m'), p_m: readUnit('p_m') };
+  }
+  if (inputs.selectionEnabled) {
+    params.selection = {
+      w11: readUnit('w11'), w12: readUnit('w12'), w22: readUnit('w22'), target_p: readUnit('target_p'),
+    };
   }
   return Object.keys(errors).length ? { errors } : { errors, params };
 }
@@ -66,7 +76,22 @@ function ParamLabel({ label, info }: { label: string; info: string }) {
   return <span className="field-label">{label} <Info text={info} /></span>;
 }
 
-function ResultsChart({ rows, tab }: { rows: GenerationRow[]; tab: Exclude<TabName, 'table'> }) {
+function FactorCard({ name, symbols, enabled, onToggle, children }: {
+  name: string; symbols: string; enabled: boolean; onToggle: (checked: boolean) => void; children: ReactNode;
+}) {
+  return <div className={enabled ? 'factor-card factor-card-active' : 'factor-card'}>
+    <label className="factor factor-toggle">
+      <Switch checked={enabled} size="small" onChange={(_, checked) => onToggle(checked)}
+        slotProps={{ input: { role: 'switch', 'aria-label': name } }} />
+      <span>{name}</span><small>{symbols}</small>
+    </label>
+    {enabled && children}
+  </div>;
+}
+
+function ResultsChart({ rows, tab, targetP, targetGeneration }: {
+  rows: GenerationRow[]; tab: Exclude<TabName, 'table'>; targetP?: number; targetGeneration?: number;
+}) {
   const series = tab === 'alleles'
     ? [{ key: 'p', name: 'p (A)', color: '#2161eb' }, { key: 'q', name: 'q (a)', color: '#e57925' }]
     : tab === 'genotypes'
@@ -81,6 +106,12 @@ function ResultsChart({ rows, tab }: { rows: GenerationRow[]; tab: Exclude<TabNa
           <YAxis domain={[0, 1]} tickCount={6} tickFormatter={display} tick={{ fontSize: 12, fill: '#8290a0' }} tickLine={false} axisLine={false} width={42} />
           <ChartTooltip formatter={(value) => typeof value === 'number' ? display(value) : String(value)} labelFormatter={(label) => `Поколение ${label}`} />
           {series.map((line) => <Line key={line.key} type="linear" dataKey={line.key} name={line.name} stroke={line.color} strokeWidth={2.5} dot={false} isAnimationActive={false} />)}
+          {tab === 'alleles' && targetP !== undefined && <ReferenceLine y={targetP}
+            stroke="#718297" strokeDasharray="5 4"
+            label={{ value: `p* = ${display(targetP)}`, position: targetP < 0.95 ? 'insideBottomRight' : 'insideTopRight', fill: '#607184', fontSize: 11 }} />}
+          {tab === 'alleles' && targetGeneration !== undefined && <ReferenceLine x={targetGeneration}
+            stroke="#718297" strokeDasharray="5 4"
+            label={{ value: `t = ${targetGeneration}`, position: targetGeneration > rows.length / 2 ? 'insideTopLeft' : 'insideTopRight', fill: '#607184', fontSize: 11 }} />}
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -120,13 +151,18 @@ export default function App() {
   const currentParams = validation.params;
   const resultParams = result?.params;
   const migration = resultParams?.migration;
+  const selection = resultParams?.selection;
   const q = Number.isFinite(parseDecimal(inputs.p0)) && parseDecimal(inputs.p0) >= 0 && parseDecimal(inputs.p0) <= 1 ? display(1 - parseDecimal(inputs.p0)) : '—';
   const resultIsStale = resultParams && (
     resultParams.n !== currentParams?.n || resultParams.p0 !== currentParams?.p0 ||
     resultParams.generations !== currentParams?.generations ||
-    migration?.m !== currentParams?.migration?.m || migration?.p_m !== currentParams?.migration?.p_m
+    migration?.m !== currentParams?.migration?.m || migration?.p_m !== currentParams?.migration?.p_m ||
+    selection?.target_p !== currentParams?.selection?.target_p ||
+    FITNESS_FIELDS.some(([field]) => selection?.[field] !== currentParams?.selection?.[field])
   );
-  const mode = (resultParams ? Boolean(migration) : inputs.migrationEnabled) ? 'Миграция' : 'Идеальная популяция';
+  const selectedFactors = [inputs.migrationEnabled && 'Миграция', inputs.selectionEnabled && 'Отбор'].filter(Boolean);
+  const resultFactors = [migration && 'Миграция', selection && 'Отбор'].filter(Boolean);
+  const mode = (result ? resultFactors : selectedFactors).join(' + ') || 'Идеальная популяция';
 
   useEffect(() => {
     const controller = new AbortController();
@@ -136,6 +172,15 @@ export default function App() {
 
   function update(field: InputField, value: string) { setInputs((previous) => ({ ...previous, [field]: value })); }
 
+  function factorField(field: InputField, label: string, info: string) {
+    return <label key={field}>
+      <ParamLabel label={label} info={info} />
+      <TextField value={inputs[field]} onChange={(e) => update(field, e.target.value)}
+        error={attempted && !!validation.errors[field]} helperText={attempted ? validation.errors[field] : undefined}
+        slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': label } }} />
+    </label>;
+  }
+
   async function run() {
     setAttempted(true);
     setRequestError('');
@@ -144,7 +189,11 @@ export default function App() {
     setLoading(true);
     try {
       const response = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: AbortSignal.timeout(15_000) });
-      if (response.status === 422) throw new Error('Сервер отклонил параметры. Проверьте значения полей.');
+      if (response.status === 422) {
+        const data = await response.json().catch(() => null);
+        throw new Error(typeof data?.detail === 'string'
+          ? data.detail : 'Сервер отклонил параметры. Проверьте значения полей.');
+      }
       if (!response.ok) throw new Error('Не удалось выполнить расчет. Попробуйте еще раз.');
       const data: SimulationResult = await response.json();
       setResult(data);
@@ -181,35 +230,31 @@ export default function App() {
         </div>
         <div className="factors-heading"><span className="eyebrow">Факторы</span></div>
         <div className="factor-list">
-          <div className={inputs.migrationEnabled ? 'factor-card factor-card-active' : 'factor-card'}>
-            <label className="factor factor-toggle">
-              <Switch
-                checked={inputs.migrationEnabled} size="small"
-                onChange={(_, checked) => setInputs((previous) => ({ ...previous, migrationEnabled: checked }))}
-                slotProps={{ input: { role: 'switch', 'aria-label': 'Миграция' } }}
-              />
-              <span>Миграция</span><small>m, pₘ</small>
-            </label>
-            {inputs.migrationEnabled && <div className="fields-grid migration-fields">
-              <label>
-                <ParamLabel label="Доля мигрантов m" info="Доля мигрантов в каждом поколении: от 0 до 1." />
-                <TextField value={inputs.m} onChange={(e) => update('m', e.target.value)}
-                  error={attempted && !!validation.errors.m} helperText={attempted ? validation.errors.m : undefined}
-                  slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': 'Доля мигрантов m' } }} />
-              </label>
-              <label>
-                <ParamLabel label="Частота pₘ" info="Частота аллеля A среди мигрантов: от 0 до 1." />
-                <TextField value={inputs.p_m} onChange={(e) => update('p_m', e.target.value)}
-                  error={attempted && !!validation.errors.p_m} helperText={attempted ? validation.errors.p_m : undefined}
-                  slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': 'Частота pₘ' } }} />
-              </label>
-            </div>}
-          </div>
+          <FactorCard name="Миграция" symbols="m, pₘ" enabled={inputs.migrationEnabled}
+            onToggle={(checked) => setInputs((previous) => ({ ...previous, migrationEnabled: checked }))}>
+            <div className="fields-grid factor-fields">
+              {factorField('m', 'Доля мигрантов m', 'Доля мигрантов в каждом поколении: от 0 до 1.')}
+              {factorField('p_m', 'Частота pₘ', 'Частота аллеля A среди мигрантов: от 0 до 1.')}
+            </div>
+          </FactorCard>
+          <FactorCard name="Отбор" symbols="w₁₁, w₁₂, w₂₂" enabled={inputs.selectionEnabled}
+            onToggle={(checked) => setInputs((previous) => ({ ...previous, selectionEnabled: checked }))}>
+            <div className="fields-grid factor-fields selection-fields">
+              {FITNESS_FIELDS.map(([field, symbol, genotype]) =>
+                factorField(field, `${symbol} (${genotype})`, `Приспособленность генотипа ${genotype}: от 0 до 1.`))}
+              <div className="selection-target-field">
+                {factorField('target_p', 'Целевая частота p*', 'Частота аллеля A, которую нужно достичь: от 0 до 1. Может быть выше или ниже начальной.')}
+              </div>
+            </div>
+          </FactorCard>
           {UPCOMING_FACTORS.map(([name, symbol]) => <div className="factor" key={name}><Switch disabled size="small" slotProps={{ input: { 'aria-label': name } }} /><span>{name}</span><small>{symbol}</small></div>)}
         </div>
         <div className="model-note"><span className="note-icon">i</span><div>
-          <strong>{inputs.migrationEnabled ? 'Миграция' : 'Идеальная популяция'}</strong><br />
-          {inputs.migrationEnabled ? 'Доля m популяции в каждом поколении приходится на мигрантов.' : 'Расчет без отбора, миграции, инбридинга и дрейфа.'}
+          <strong>{selectedFactors.join(' + ') || 'Идеальная популяция'}</strong><br />
+          {selectedFactors.length === 2 ? 'В каждом поколении сначала применяется миграция, затем отбор.'
+            : inputs.selectionEnabled ? 'Частота аллеля меняется в зависимости от приспособленности генотипов.'
+            : inputs.migrationEnabled ? 'Доля m популяции в каждом поколении приходится на мигрантов.'
+            : 'Расчет без отбора, миграции, инбридинга и дрейфа.'}
         </div></div>
         <div className="actions"><Button variant="contained" onClick={run} disabled={loading} startIcon={loading ? <CircularProgress size={15} color="inherit" /> : <span className="play-icon">▶</span>}>{loading ? 'Расчет…' : 'Запустить'}</Button><Button variant="outlined" color="inherit" onClick={reset} disabled={loading}>Сбросить</Button></div>
       </aside>
@@ -220,7 +265,7 @@ export default function App() {
           <div className="empty-chart"><svg viewBox="0 0 100 72" fill="none" aria-hidden="true"><path d="M10 7v52h80" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/><path d="M17 46 35 33l17 5 17-20 17 6" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="69" cy="18" r="4" fill="currentColor"/></svg></div>
           <h2>Здесь появятся результаты</h2>
           <p>Задайте параметры популяции и нажмите «Запустить», чтобы увидеть изменение частот по поколениям.</p>
-          {!inputs.migrationEnabled && <div className="empty-hint"><span>✓</span> Начните с идеальной популяции без факторов</div>}
+          {selectedFactors.length === 0 && <div className="empty-hint"><span>✓</span> Начните с идеальной популяции без факторов</div>}
         </div>}
         {loading && !result && <div className="empty-state" role="status"><CircularProgress size={36} /><h2>Выполняем расчет</h2><p>Передаем параметры на сервер.</p></div>}
         {result && last && <>
@@ -229,19 +274,36 @@ export default function App() {
             <div><span>Частота p в поколении {last.t}</span><strong>{display(last.p)}</strong><small>в начале: {display(result.params.p0)}</small></div>
             <div><span>Гетерозиготность H = 2pq</span><strong>{display(last.h)}</strong><small>доля гетерозигот Aa</small></div>
             <div><span>Изменение частоты p</span><strong className="positive">{display(maxDelta)}</strong><small>максимальное за весь расчет</small></div>
-            <div><span>Поколений рассчитано</span><strong>{integer.format(last.t)}</strong><small>начальное поколение включено</small></div>
+            {selection ? <div>
+              <span>Достижение p* = {display(selection.target_p)}</span>
+              <strong>{result.target_generation === undefined ? 'Не достигнута' : `t = ${integer.format(result.target_generation)}`}</strong>
+              <small>{result.target_generation === undefined ? `за ${integer.format(result.params.generations)} поколений` : 'первое поколение, достигшее цели'}</small>
+            </div> : <div><span>Поколений рассчитано</span><strong>{integer.format(last.t)}</strong><small>начальное поколение включено</small></div>}
           </div>
           <div className="result-content">
             <div className="result-tabs" role="tablist" aria-label="Данные расчета">{TABS.map((item) => <button role="tab" aria-selected={tab === item.id} key={item.id} className={tab === item.id ? 'selected' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
-            {tab === 'table' ? <ResultsTable rows={result.rows} /> : <ResultsChart rows={result.rows} tab={tab} />}
-            <div className="parameters-summary"><strong>Параметры расчета:</strong> N = {integer.format(result.params.n)}; p₀ = {display(result.params.p0)}; T = {integer.format(result.params.generations)}; {migration ? <>миграция (m = {display(migration.m)}, pₘ = {display(migration.p_m)})</> : 'факторы выключены'}</div>
+            {tab === 'table' ? <ResultsTable rows={result.rows} /> : <ResultsChart rows={result.rows} tab={tab}
+              targetP={selection?.target_p} targetGeneration={result.target_generation} />}
+            <div className="parameters-summary">
+              <strong>Параметры расчета:</strong> N = {integer.format(result.params.n)}; p₀ = {display(result.params.p0)}; T = {integer.format(result.params.generations)}
+              {migration && <>; миграция (m = {display(migration.m)}, pₘ = {display(migration.p_m)})</>}
+              {selection && <>; отбор (w₁₁ = {display(selection.w11)}, w₁₂ = {display(selection.w12)}, w₂₂ = {display(selection.w22)}, p* = {display(selection.target_p)})</>}
+              {resultFactors.length === 0 && '; факторы выключены'}
+            </div>
           </div>
         </>}
       </section>
     </main>
     <footer className="footer">Учебная модель · Один локус, два аллеля, неперекрывающиеся поколения</footer>
     <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="sm" fullWidth>
-      <DialogTitle>Справка</DialogTitle><DialogContent><Box component="p">В идеальной популяции частоты аллелей остаются постоянными. Для частоты аллеля A, равной p, частота a равна q = 1 − p.</Box><Box component="p">Ожидаемые доли генотипов: AA = p², Aa = 2pq, aa = q². Гетерозиготность H = 2pq.</Box><Box component="p">При миграции частота аллеля A в следующем поколении равна (1 − m)p + m·pₘ. Здесь m — доля мигрантов, pₘ — частота аллеля A среди них.</Box></DialogContent><DialogActions><Button onClick={() => setHelpOpen(false)}>Понятно</Button></DialogActions>
+      <DialogTitle>Справка</DialogTitle>
+      <DialogContent>
+        <Box component="p">В идеальной популяции частоты аллелей остаются постоянными. Для частоты аллеля A, равной p, частота a равна q = 1 − p.</Box>
+        <Box component="p">Ожидаемые доли генотипов: AA = p², Aa = 2pq, aa = q². Гетерозиготность H = 2pq.</Box>
+        <Box component="p">При миграции частота аллеля A в следующем поколении равна (1 − m)p + m·pₘ. Здесь m — доля мигрантов, pₘ — частота аллеля A среди них.</Box>
+        <Box component="p">При отборе приспособленность определяет долю выживших для каждого генотипа. Если включена миграция, отбор применяется после нее.</Box>
+      </DialogContent>
+      <DialogActions><Button onClick={() => setHelpOpen(false)}>Понятно</Button></DialogActions>
     </Dialog>
   </div>;
 }

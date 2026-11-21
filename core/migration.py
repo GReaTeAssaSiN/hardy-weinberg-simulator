@@ -15,11 +15,14 @@ class MigrationParameters:
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
                 raise ValueError(f"{label}: требуется число от 0 до 1")
 
+    def apply(self, p: float) -> float:
+        return (1 - self.m) * p + self.m * self.p_m
+
 
 def simulate_migration(params: IdealParameters, migration: MigrationParameters) -> list[Generation]:
     p = float(params.initial_frequency)
     rows = [generation_at_frequency(0, p)]
     for t in range(1, params.generations + 1):
-        p = (1 - migration.m) * p + migration.m * migration.p_m
+        p = migration.apply(p)
         rows.append(generation_at_frequency(t, p))
     return rows

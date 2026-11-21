@@ -3,6 +3,7 @@ export type SimulationParams = {
   p0: number;
   generations: number;
   migration?: { m: number; p_m: number };
+  selection?: { w11: number; w12: number; w22: number; target_p: number };
 };
 
 export type GenerationRow = {
@@ -18,4 +19,5 @@ export type GenerationRow = {
 export type SimulationResult = {
   params: SimulationParams;
   rows: GenerationRow[];
+  target_generation?: number;
 };

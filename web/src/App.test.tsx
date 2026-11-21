@@ -6,6 +6,7 @@ vi.mock('recharts', () => ({
   CartesianGrid: () => null,
   Line: () => null,
   LineChart: () => <div>Тестовый график</div>,
+  ReferenceLine: () => null,
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Tooltip: () => null,
   XAxis: () => null,
@@ -80,5 +81,31 @@ describe('моделирование популяции', () => {
     fireEvent.click(migrationSwitch);
     expect(screen.queryByRole('textbox', { name: 'Доля мигрантов m' })).toBeNull();
     expect(screen.getByText(/Параметры изменены/)).toBeTruthy();
+  });
+
+  it('отправляет параметры отбора и отображает поколение достижения цели из API', async () => {
+    const params = { n: 500, p0: 0.3, generations: 100, selection: { w11: 1, w12: 1, w22: 0.6, target_p: 0.95 } };
+    const rows = [
+      { t: 0, p: 0.3, q: 0.7, f_AA: 0.09, f_Aa: 0.42, f_aa: 0.49, h: 0.42 },
+      { t: 100, p: 0.974, q: 0.026, f_AA: 0.949, f_Aa: 0.05, f_aa: 0.001, h: 0.05 },
+    ];
+    const fetchMock = vi.fn().mockImplementation((url) => Promise.resolve(url === '/health'
+      ? { ok: true }
+      : { ok: true, json: async () => ({ params, rows, target_generation: 53 }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    fireEvent.click(screen.getByRole('switch', { name: 'Отбор' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Частота p (A)' }), { target: { value: '0,3' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'w₂₂ (aa)' }), { target: { value: '0,6' } });
+    const target = screen.getByRole('textbox', { name: 'Целевая частота p*' });
+    fireEvent.change(target, { target: { value: '0,95' } });
+    fireEvent.click(screen.getByRole('button', { name: /запустить/i }));
+
+    await screen.findByText('t = 53');
+    const call = fetchMock.mock.calls.find(([url]) => url === '/api/simulate');
+    expect(JSON.parse(call![1].body)).toEqual(params);
+    fireEvent.change(target, { target: { value: '0,99' } });
+    expect(screen.getByText(/Параметры изменены/)).toBeTruthy();
+    expect(screen.getByText('Достижение p* = 0,95')).toBeTruthy();
   });
 });
