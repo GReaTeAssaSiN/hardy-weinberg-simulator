@@ -11,11 +11,12 @@ import {
 } from 'recharts';
 import type { GenerationRow, SimulationParams, SimulationResult } from './types';
 
-type InputField = 'n' | 'p0' | 'generations' | 'm' | 'p_m' | 'w11' | 'w12' | 'w22' | 'target_p' | 'f';
+type InputField = 'n' | 'p0' | 'generations' | 'm' | 'p_m' | 'w11' | 'w12' | 'w22' | 'target_p' | 'f' | 'seed';
 type Inputs = Record<InputField, string> & {
   migrationEnabled: boolean;
   selectionEnabled: boolean;
   inbreedingEnabled: boolean;
+  driftEnabled: boolean;
 };
 type FieldErrors = Partial<Record<InputField, string>>;
 type TabName = 'alleles' | 'genotypes' | 'heterozygosity' | 'table';
@@ -25,7 +26,9 @@ const INITIAL: Inputs = {
   migrationEnabled: false, m: '0,1', p_m: '0,8',
   selectionEnabled: false, w11: '1', w12: '1', w22: '0,8', target_p: '0,9',
   inbreedingEnabled: false, f: '0,25',
+  driftEnabled: false, seed: '42',
 };
+const MAX_SEED = 2 ** 32 - 1;
 const FITNESS_FIELDS = [['w11', 'w₁₁', 'AA'], ['w12', 'w₁₂', 'Aa'], ['w22', 'w₂₂', 'aa']] as const;
 const TABS: { id: TabName; label: string }[] = [
   { id: 'alleles', label: 'Частоты аллелей' },
@@ -35,6 +38,7 @@ const TABS: { id: TabName; label: string }[] = [
 ];
 const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 });
 const integer = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
+const oneDecimal = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
 const display = (value: number) => number.format(value);
 
 function parseDecimal(value: string): number {
@@ -69,6 +73,14 @@ function validate(inputs: Inputs): { params?: SimulationParams; errors: FieldErr
   if (inputs.inbreedingEnabled) {
     params.inbreeding = { f: readUnit('f') };
   }
+  if (inputs.driftEnabled) {
+    const rawSeed = inputs.seed.trim();
+    const seed = Number(rawSeed);
+    if (rawSeed && (!/^\d+$/.test(rawSeed) || seed > MAX_SEED)) {
+      errors.seed = 'Введите целое число от 0 до 4 294 967 295';
+    }
+    params.drift = rawSeed ? { seed } : {};
+  }
   return Object.keys(errors).length ? { errors } : { errors, params };
 }
 
@@ -93,9 +105,9 @@ function FactorCard({ name, symbols, enabled, onToggle, children }: {
   </div>;
 }
 
-function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding }: {
+function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding, showDrift }: {
   rows: GenerationRow[]; tab: Exclude<TabName, 'table'>;
-  targetP?: number; targetGeneration?: number; showInbreeding: boolean;
+  targetP?: number; targetGeneration?: number; showInbreeding: boolean; showDrift: boolean;
 }) {
   const series: { key: keyof GenerationRow; name: string; color: string; dash?: string }[] = tab === 'alleles'
     ? [{ key: 'p', name: 'p (A)', color: '#2161eb' }, { key: 'q', name: 'q (a)', color: '#e57925' }]
@@ -104,7 +116,10 @@ function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding }: 
       : showInbreeding
         ? [{ key: 'h', name: 'Ожидаемая H = 2pq', color: '#536b88', dash: '5 4' },
           { key: 'f_Aa', name: 'Доля Aa при заданном F', color: '#0d8c82' }]
-        : [{ key: 'h', name: 'H = 2pq', color: '#0d8c82' }];
+        : [{ key: 'h', name: showDrift ? 'H = 2pq в одном прогоне' : 'H = 2pq', color: '#0d8c82' }];
+  if (tab === 'heterozygosity' && rows[0]?.h_theory !== undefined) {
+    series.push({ key: 'h_theory', name: 'Средняя H по теории', color: '#536b88', dash: '5 4' });
+  }
   return <>
     <div className="chart-wrap" aria-label="График по поколениям">
       <ResponsiveContainer width="100%" height="100%" minWidth={0}>
@@ -164,6 +179,9 @@ export default function App() {
   const migration = resultParams?.migration;
   const selection = resultParams?.selection;
   const inbreeding = resultParams?.inbreeding;
+  const drift = resultParams?.drift;
+  const driftBoundary = result?.drift_summary?.boundary;
+  const halfLife = result?.drift_summary?.theoretical_half_life;
   const q = Number.isFinite(parseDecimal(inputs.p0)) && parseDecimal(inputs.p0) >= 0 && parseDecimal(inputs.p0) <= 1 ? display(1 - parseDecimal(inputs.p0)) : '—';
   const resultIsStale = resultParams && (
     resultParams.n !== currentParams?.n || resultParams.p0 !== currentParams?.p0 ||
@@ -171,13 +189,16 @@ export default function App() {
     migration?.m !== currentParams?.migration?.m || migration?.p_m !== currentParams?.migration?.p_m ||
     selection?.target_p !== currentParams?.selection?.target_p ||
     FITNESS_FIELDS.some(([field]) => selection?.[field] !== currentParams?.selection?.[field]) ||
-    inbreeding?.f !== currentParams?.inbreeding?.f
+    inbreeding?.f !== currentParams?.inbreeding?.f ||
+    Boolean(drift) !== Boolean(currentParams?.drift) || drift?.seed !== currentParams?.drift?.seed
   );
   const selectedFactors = [
     inputs.migrationEnabled && 'Миграция', inputs.selectionEnabled && 'Отбор', inputs.inbreedingEnabled && 'Инбридинг',
+    inputs.driftEnabled && 'Дрейф',
   ].filter(Boolean);
-  const resultFactors = [migration && 'Миграция', selection && 'Отбор', inbreeding && 'Инбридинг'].filter(Boolean);
-  const mode = (result ? resultFactors : selectedFactors).join(' + ') || 'Идеальная популяция';
+  const resultFactors = [migration && 'Миграция', selection && 'Отбор', inbreeding && 'Инбридинг', drift && 'Дрейф'].filter(Boolean);
+  const shownFactors = result ? resultFactors : selectedFactors;
+  const mode = shownFactors.length === 4 ? '4 фактора' : shownFactors.join(' + ') || 'Идеальная популяция';
 
   useEffect(() => {
     const controller = new AbortController();
@@ -192,7 +213,7 @@ export default function App() {
       <ParamLabel label={label} info={info} />
       <TextField value={inputs[field]} onChange={(e) => update(field, e.target.value)}
         error={attempted && !!validation.errors[field]} helperText={attempted ? validation.errors[field] : undefined}
-        slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': label } }} />
+        slotProps={{ htmlInput: { inputMode: field === 'seed' ? 'numeric' : 'decimal', 'aria-label': label } }} />
     </label>;
   }
 
@@ -211,9 +232,18 @@ export default function App() {
       }
       if (!response.ok) throw new Error('Не удалось выполнить расчет. Попробуйте еще раз.');
       const data: SimulationResult = await response.json();
+      const effectiveSeed = data.params.drift?.seed;
+      if (params.drift && params.drift.seed === undefined && effectiveSeed !== undefined) {
+        setInputs((previous) => previous.driftEnabled && previous.seed.trim() === ''
+          ? { ...previous, seed: String(effectiveSeed) } : previous);
+      }
       setResult(data);
       setServer('online');
-      setTab(params.inbreeding && !params.migration && !params.selection ? 'genotypes' : 'alleles');
+      if (params.drift && !params.selection) {
+        setTab('heterozygosity');
+      } else {
+        setTab(params.inbreeding && !params.migration && !params.selection ? 'genotypes' : 'alleles');
+      }
     } catch (error) {
       if (error instanceof TypeError || (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError'))) {
         setServer('offline');
@@ -264,15 +294,21 @@ export default function App() {
           </FactorCard>
           <FactorCard name="Неслучайное скрещивание" symbols="F" enabled={inputs.inbreedingEnabled}
             onToggle={(checked) => setInputs((previous) => ({ ...previous, inbreedingEnabled: checked }))}>
-            <div className="fields-grid factor-fields inbreeding-fields">
+            <div className="fields-grid factor-fields single-factor-field">
               {factorField('f', 'Коэффициент инбридинга F', 'Число от 0 до 1. При F = 0 скрещивание случайное, при F = 1 гетерозиготы отсутствуют.')}
             </div>
           </FactorCard>
-          <div className="factor"><Switch disabled size="small" slotProps={{ input: { 'aria-label': 'Генетический дрейф' } }} /><span>Генетический дрейф</span><small>N</small></div>
+          <FactorCard name="Генетический дрейф" symbols="по N" enabled={inputs.driftEnabled}
+            onToggle={(checked) => setInputs((previous) => ({ ...previous, driftEnabled: checked }))}>
+            <div className="fields-grid factor-fields single-factor-field">
+              {factorField('seed', 'Зерно генератора', 'Целое число от 0 до 4 294 967 295. Пустое поле — сервер выберет зерно и покажет его в результатах.')}
+            </div>
+          </FactorCard>
         </div>
         <div className="model-note"><span className="note-icon">i</span><div>
           <strong>{selectedFactors.join(' + ') || 'Идеальная популяция'}</strong><br />
           {selectedFactors.length > 1 ? `Порядок применения факторов: ${selectedFactors.join(' → ')}.`
+            : inputs.driftEnabled ? 'В каждом поколении частота аллеля зависит от случайной выборки 2N копий.'
             : inputs.inbreedingEnabled ? 'Инбридинг увеличивает долю гомозигот, сохраняя частоты аллелей.'
             : inputs.selectionEnabled ? 'Частота аллеля меняется в зависимости от приспособленности генотипов.'
             : inputs.migrationEnabled ? 'Доля m популяции в каждом поколении приходится на мигрантов.'
@@ -305,17 +341,31 @@ export default function App() {
               <span>Достижение p* = {display(selection.target_p)}</span>
               <strong>{result.target_generation === undefined ? 'Не достигнута' : `t = ${integer.format(result.target_generation)}`}</strong>
               <small>{result.target_generation === undefined ? `за ${integer.format(result.params.generations)} поколений` : 'первое поколение, достигшее цели'}</small>
+            </div> : halfLife !== undefined ? <div>
+              <span>Снижение средней H вдвое</span><strong>≈ {oneDecimal.format(halfLife)}</strong>
+              <small>поколений по теории нейтрального дрейфа</small>
             </div> : <div><span>Поколений рассчитано</span><strong>{integer.format(last.t)}</strong><small>начальное поколение включено</small></div>}
           </div>
           <div className="result-content">
             <div className="result-tabs" role="tablist" aria-label="Данные расчета">{TABS.map((item) => <button role="tab" aria-selected={tab === item.id} key={item.id} className={tab === item.id ? 'selected' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
             {tab === 'table' ? <ResultsTable rows={result.rows} /> : <ResultsChart rows={result.rows} tab={tab}
-              targetP={selection?.target_p} targetGeneration={result.target_generation} showInbreeding={Boolean(inbreeding)} />}
+              targetP={selection?.target_p} targetGeneration={result.target_generation}
+              showInbreeding={Boolean(inbreeding)} showDrift={Boolean(drift)} />}
+            {tab === 'heterozygosity' && halfLife !== undefined && <div className="chart-caption">
+              Теоретическая кривая показывает среднее по множеству прогонов. При данной N средняя H уменьшается вдвое примерно за {oneDecimal.format(halfLife)} поколений.
+            </div>}
+            {drift && <div className="chart-caption">
+              {driftBoundary
+                ? `${driftBoundary.kind === 'fixation' ? 'Фиксация аллеля A' : 'Потеря аллеля A'} впервые отмечена в поколении ${integer.format(driftBoundary.generation)}.`
+                : 'Фиксация или потеря аллеля A за время прогона не отмечена.'}
+              {driftBoundary && migration && ' Миграция может восстановить утраченный аллель.'}
+            </div>}
             <div className="parameters-summary">
               <strong>Параметры расчета:</strong> N = {integer.format(result.params.n)}; p₀ = {display(result.params.p0)}; T = {integer.format(result.params.generations)}
               {migration && <>; миграция (m = {display(migration.m)}, pₘ = {display(migration.p_m)})</>}
               {selection && <>; отбор (w₁₁ = {display(selection.w11)}, w₁₂ = {display(selection.w12)}, w₂₂ = {display(selection.w22)}, p* = {display(selection.target_p)})</>}
               {inbreeding && <>; инбридинг (F = {display(inbreeding.f)})</>}
+              {drift && <>; дрейф (зерно {drift.seed})</>}
               {resultFactors.length === 0 && '; факторы выключены'}
             </div>
           </div>
@@ -331,6 +381,7 @@ export default function App() {
         <Box component="p">При миграции частота аллеля A в следующем поколении равна (1 − m)p + m·pₘ. Здесь m — доля мигрантов, pₘ — частота аллеля A среди них.</Box>
         <Box component="p">При отборе приспособленность определяет долю выживших для каждого генотипа. Если включена миграция, отбор применяется после нее.</Box>
         <Box component="p">При инбридинге частоты аллелей остаются прежними, а доля гетерозигот Aa равна 2pq(1 − F). График гетерозиготности сравнивает ее с ожидаемой долей 2pq при случайном скрещивании.</Box>
+        <Box component="p">При дрейфе частота меняется случайно: в каждом поколении выбираются 2N копий аллелей. При тех же параметрах и зерне расчет повторяется. Теория описывает среднее для дрейфа без других факторов.</Box>
       </DialogContent>
       <DialogActions><Button onClick={() => setHelpOpen(false)}>Понятно</Button></DialogActions>
     </Dialog>

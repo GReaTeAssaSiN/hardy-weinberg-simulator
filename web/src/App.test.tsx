@@ -143,4 +143,38 @@ describe('моделирование популяции', () => {
     fireEvent.change(factor, { target: { value: '1' } });
     expect(screen.getByText(/Параметры изменены/)).toBeTruthy();
   });
+
+  it('показывает зерно сервера и повторяет прогон с ним', async () => {
+    const params = { n: 100, p0: 0.5, generations: 1, drift: { seed: 42 } };
+    const rows = [
+      { t: 0, p: 0.5, q: 0.5, f_AA: 0.25, f_Aa: 0.5, f_aa: 0.25, h: 0.5, h_theory: 0.5 },
+      { t: 1, p: 0.515, q: 0.485, f_AA: 0.265225, f_Aa: 0.49955, f_aa: 0.235225, h: 0.49955, h_theory: 0.4975 },
+    ];
+    const fetchMock = vi.fn().mockImplementation((url) => Promise.resolve(url === '/health'
+      ? { ok: true }
+      : { ok: true, json: async () => ({ params, rows, drift_summary: { theoretical_half_life: 138.28257 } }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    fireEvent.click(screen.getByRole('switch', { name: 'Генетический дрейф' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Численность N' }), { target: { value: '100' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Поколений T' }), { target: { value: '1' } });
+    const seed = screen.getByRole<HTMLInputElement>('textbox', { name: 'Зерно генератора' });
+    const runButton = screen.getByRole('button', { name: /запустить/i });
+    fireEvent.change(seed, { target: { value: '42,5' } });
+    fireEvent.click(runButton);
+    expect(screen.getByText('Введите целое число от 0 до 4 294 967 295')).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/simulate')).toBe(false);
+
+    fireEvent.change(seed, { target: { value: '' } });
+    fireEvent.click(runButton);
+    await screen.findByText('≈ 138,3');
+    expect(seed.value).toBe('42');
+    expect(screen.getByText('Средняя H по теории')).toBeTruthy();
+    expect(screen.queryByText(/Параметры изменены/)).toBeNull();
+
+    fireEvent.click(runButton);
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/simulate').length).toBe(2));
+    const calls = fetchMock.mock.calls.filter(([url]) => url === '/api/simulate');
+    expect(calls.map(([, request]) => JSON.parse(request.body).drift)).toEqual([{}, { seed: 42 }]);
+  });
 });

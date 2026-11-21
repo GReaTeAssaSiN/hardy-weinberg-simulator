@@ -1,11 +1,12 @@
 """API симулятора популяции."""
 
 from dataclasses import asdict
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.drift import MAX_SEED, DriftParameters
 from core.ideal import IdealParameters
 from core.inbreeding import InbreedingParameters
 from core.migration import MigrationParameters
@@ -37,6 +38,12 @@ class InbreedingRequest(BaseModel):
     f: UnitInterval = Field(description="Коэффициент инбридинга")
 
 
+class DriftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    seed: Annotated[int, Field(strict=True, ge=0, le=MAX_SEED)] | None = None
+
+
 class SimulationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -46,6 +53,7 @@ class SimulationRequest(BaseModel):
     migration: MigrationRequest | None = None
     selection: SelectionRequest | None = None
     inbreeding: InbreedingRequest | None = None
+    drift: DriftRequest | None = None
 
 
 class GenerationRow(BaseModel):
@@ -56,18 +64,30 @@ class GenerationRow(BaseModel):
     f_Aa: float
     f_aa: float
     h: float = Field(description="Ожидаемая гетерозиготность 2pq")
+    h_theory: float | None = Field(default=None, description="Средняя H по теории нейтрального дрейфа")
+
+
+class DriftBoundaryResult(BaseModel):
+    kind: Literal["fixation", "loss"]
+    generation: int
+
+
+class DriftResult(BaseModel):
+    boundary: DriftBoundaryResult | None = None
+    theoretical_half_life: float | None = None
 
 
 class SimulationResult(BaseModel):
     params: SimulationRequest
     rows: list[GenerationRow]
     target_generation: int | None = Field(default=None, description="Первое поколение, достигшее цели отбора")
+    drift_summary: DriftResult | None = None
 
 
 app = FastAPI(
     title="Симулятор Харди — Вайнберга",
     version="0.1.0",
-    description="Моделирование идеальной популяции, миграции, отбора и неслучайного скрещивания.",
+    description="Моделирование идеальной популяции, миграции, отбора, неслучайного скрещивания и генетического дрейфа.",
 )
 
 
@@ -82,14 +102,22 @@ def simulate(params: SimulationRequest) -> SimulationResult:
     migration = MigrationParameters(**params.migration.model_dump()) if params.migration else None
     selection = SelectionParameters(**params.selection.model_dump()) if params.selection else None
     inbreeding = InbreedingParameters(params.inbreeding.f) if params.inbreeding else None
+    drift = None
+    if params.drift is not None:
+        if params.drift.seed is None:
+            drift = DriftParameters()
+            params = params.model_copy(update={"drift": DriftRequest(seed=drift.seed)})
+        else:
+            drift = DriftParameters(params.drift.seed)
     try:
-        result, target_generation = simulate_population(
-            population, migration=migration, selection=selection, inbreeding=inbreeding,
+        result = simulate_population(
+            population, migration=migration, selection=selection, inbreeding=inbreeding, drift=drift,
         )
     except ZeroFitnessError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return SimulationResult(
         params=params,
-        rows=[GenerationRow(**asdict(row)) for row in result],
-        target_generation=target_generation,
+        rows=[GenerationRow(**asdict(row)) for row in result.rows],
+        target_generation=result.target_generation,
+        drift_summary=DriftResult(**asdict(result.drift_summary)) if result.drift_summary is not None else None,
     )
