@@ -6,6 +6,8 @@ from typing import Annotated, Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.limits import BATCH_TIMEOUT_SECONDS, SINGLE_TIMEOUT_SECONDS, calculation_budget
+from core.batch import MAX_RUNS, MIN_RUNS, BatchGeneration, BoundaryStatistics, simulate_batch as simulate_replicates
 from core.chi_square import CHI_SQUARE_CRITICAL_VALUE
 from core.drift import MAX_SEED, DriftParameters
 from core.ideal import IdealParameters
@@ -57,6 +59,11 @@ class SimulationRequest(BaseModel):
     drift: DriftRequest | None = None
 
 
+class BatchSimulationRequest(SimulationRequest):
+    drift: DriftRequest = Field(default_factory=DriftRequest, description="Дрейф включен во всех прогонах")
+    runs: Annotated[int, Field(strict=True, ge=MIN_RUNS, le=MAX_RUNS, description="Число прогонов")]
+
+
 class GenerationRow(BaseModel):
     t: int
     p: float
@@ -93,6 +100,21 @@ class SimulationResult(BaseModel):
     chi_square_summary: ChiSquareSummary
 
 
+class BatchSimulationResult(BaseModel):
+    params: BatchSimulationRequest
+    rows: list[BatchGeneration] = Field(description="Средние и процентили по поколениям")
+    trajectories: list[list[float]] = Field(description="Первые восемь траекторий p, включая поколение 0")
+    fixation: BoundaryStatistics
+    loss: BoundaryStatistics
+    theoretical_half_life: float | None = None
+
+
+LIMIT_RESPONSES = {
+    429: {"description": "Слишком много одновременных расчетов"},
+    504: {"description": "Расчет не уложился в лимит времени"},
+}
+
+
 app = FastAPI(
     title="Симулятор Харди — Вайнберга",
     version="0.1.0",
@@ -105,32 +127,61 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/simulate", response_model=SimulationResult, response_model_exclude_none=True)
-def simulate(params: SimulationRequest) -> SimulationResult:
+def model_inputs(params: SimulationRequest) -> tuple[
+    IdealParameters, MigrationParameters | None, SelectionParameters | None, InbreedingParameters | None,
+]:
     population = IdealParameters(params.n, params.p0, params.generations)
     migration = MigrationParameters(**params.migration.model_dump()) if params.migration else None
     selection = SelectionParameters(**params.selection.model_dump()) if params.selection else None
     inbreeding = InbreedingParameters(params.inbreeding.f) if params.inbreeding else None
-    drift = None
-    if params.drift is not None:
-        if params.drift.seed is None:
-            drift = DriftParameters()
-            params = params.model_copy(update={"drift": DriftRequest(seed=drift.seed)})
-        else:
-            drift = DriftParameters(params.drift.seed)
+    return population, migration, selection, inbreeding
+
+
+def resolve_drift(request: DriftRequest) -> DriftParameters:
+    return DriftParameters() if request.seed is None else DriftParameters(request.seed)
+
+
+@app.post("/api/simulate", response_model=SimulationResult, response_model_exclude_none=True, responses=LIMIT_RESPONSES)
+def simulate(params: SimulationRequest) -> SimulationResult:
+    population, migration, selection, inbreeding = model_inputs(params)
+    drift = resolve_drift(params.drift) if params.drift is not None else None
+    if drift is not None:
+        params = params.model_copy(update={"drift": DriftRequest(seed=drift.seed)})
     try:
-        result = simulate_population(
-            population, migration=migration, selection=selection, inbreeding=inbreeding, drift=drift,
-        )
+        with calculation_budget(SINGLE_TIMEOUT_SECONDS) as check_deadline:
+            result = simulate_population(
+                population, migration=migration, selection=selection, inbreeding=inbreeding,
+                drift=drift, check_deadline=check_deadline,
+            )
+            return SimulationResult(
+                params=params,
+                rows=[
+                    GenerationRow(**asdict(row), chi_square=value)
+                    for row, value in zip(result.rows, result.chi_square.values, strict=True)
+                ],
+                target_generation=result.target_generation,
+                drift_summary=DriftResult(**asdict(result.drift_summary)) if result.drift_summary is not None else None,
+                chi_square_summary=ChiSquareSummary(first_exceedance_generation=result.chi_square.first_exceedance_generation),
+            )
     except ZeroFitnessError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return SimulationResult(
-        params=params,
-        rows=[
-            GenerationRow(**asdict(row), chi_square=value)
-            for row, value in zip(result.rows, result.chi_square.values, strict=True)
-        ],
-        target_generation=result.target_generation,
-        drift_summary=DriftResult(**asdict(result.drift_summary)) if result.drift_summary is not None else None,
-        chi_square_summary=ChiSquareSummary(first_exceedance_generation=result.chi_square.first_exceedance_generation),
-    )
+
+
+@app.post("/api/simulate/batch", response_model=BatchSimulationResult,
+          response_model_exclude_none=True, responses=LIMIT_RESPONSES)
+def simulate_batch(params: BatchSimulationRequest) -> BatchSimulationResult:
+    population, migration, selection, inbreeding = model_inputs(params)
+    drift = resolve_drift(params.drift)
+    params = params.model_copy(update={"drift": DriftRequest(seed=drift.seed)})
+    try:
+        with calculation_budget(BATCH_TIMEOUT_SECONDS) as check_deadline:
+            result = simulate_replicates(
+                population, drift, params.runs, migration=migration, selection=selection,
+                inbreeding=inbreeding, check_deadline=check_deadline,
+            )
+            return BatchSimulationResult(
+                params=params, rows=result.rows, trajectories=result.trajectories,
+                fixation=result.fixation, loss=result.loss, theoretical_half_life=result.theoretical_half_life,
+            )
+    except ZeroFitnessError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
