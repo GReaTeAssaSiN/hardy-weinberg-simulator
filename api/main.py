@@ -1,9 +1,13 @@
 """API симулятора популяции."""
 
+import csv
 from dataclasses import asdict
+from io import StringIO
+from math import isfinite
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.limits import BATCH_TIMEOUT_SECONDS, SINGLE_TIMEOUT_SECONDS, calculation_budget
@@ -109,6 +113,20 @@ class BatchSimulationResult(BaseModel):
     theoretical_half_life: float | None = None
 
 
+class SingleCsvData(BaseModel):
+    params: SimulationRequest
+    rows: Annotated[list[GenerationRow], Field(min_length=2, max_length=1_001)]
+
+
+class BatchCsvData(BaseModel):
+    params: BatchSimulationRequest
+    rows: Annotated[list[BatchGeneration], Field(min_length=2, max_length=1_001)]
+
+
+SINGLE_CSV_COLUMNS = ("t", "p", "q", "f_AA", "f_Aa", "f_aa", "h", "h_theory", "chi_square")
+BATCH_CSV_COLUMNS = ("t", "p_mean", "p05", "p95", "h_mean", "h_theory", "f_Aa_mean")
+
+
 LIMIT_RESPONSES = {
     429: {"description": "Слишком много одновременных расчетов"},
     504: {"description": "Расчет не уложился в лимит времени"},
@@ -185,3 +203,34 @@ def simulate_batch(params: BatchSimulationRequest) -> BatchSimulationResult:
             )
     except ZeroFitnessError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/export", response_class=Response, responses={
+    200: {"description": "Таблица результатов в CSV", "content": {"text/csv": {}}},
+    **LIMIT_RESPONSES,
+})
+def export_csv(result: SingleCsvData | BatchCsvData) -> Response:
+    """Записывает полученные ранее результаты без повторного расчета."""
+    if isinstance(result, BatchCsvData):
+        filename, columns = "hardy-weinberg-batch.csv", BATCH_CSV_COLUMNS
+    else:
+        filename, columns = "hardy-weinberg-simulation.csv", SINGLE_CSV_COLUMNS
+
+    with calculation_budget(SINGLE_TIMEOUT_SECONDS):
+        if len(result.rows) != result.params.generations + 1:
+            raise HTTPException(status_code=422, detail="Для экспорта нужны все поколения от 0 до T.")
+        with StringIO(newline="") as buffer:
+            writer = csv.writer(buffer)
+            writer.writerow(columns)
+            for generation, row in enumerate(result.rows):
+                if row.t != generation:
+                    raise HTTPException(status_code=422, detail="Поколения в таблице должны идти по порядку от 0 до T.")
+                values = [getattr(row, column) for column in columns]
+                if any(isinstance(value, float) and not isfinite(value) for value in values):
+                    raise HTTPException(status_code=422, detail="Таблица результатов должна содержать конечные числовые значения.")
+                writer.writerow(values)
+            return Response(
+                content=buffer.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )

@@ -3,6 +3,7 @@ import { Alert, Button, Checkbox, CircularProgress, FormControlLabel, TextField 
 import {
   Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis,
 } from 'recharts';
+import CsvExport from './CsvExport';
 import { describeFactors, display, generationTicks, integer, oneDecimal, ParamLabel, parseDecimal, parseSeed, SEED_ERROR } from './simulationUi';
 import type { AdditionalFactors, BatchBoundary, BatchSimulationParams, BatchSimulationResult, SimulationParams } from './types';
 
@@ -233,7 +234,10 @@ export default function BatchScreen({ active, initialParams, availableFactors, o
       <p className="batch-note">Генетический дрейф включен во всех прогонах.</p>
     </form>
     <section className="panel results-panel" aria-label="Результаты серии">
-      <div className="results-header"><h1>Результат прогонов</h1></div>
+      <div className="results-header">
+        <h1>Результат прогонов</h1>
+        {result && <CsvExport result={result} disabled={loading} />}
+      </div>
       {requestError && <div className="alert-space"><Alert severity="error"
         action={<Button color="inherit" size="small" onClick={run} disabled={loading}>Повторить</Button>}>{requestError}</Alert></div>}
       {!result && <div className="empty-state" role={loading ? 'status' : undefined}>

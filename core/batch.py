@@ -26,8 +26,8 @@ class BatchGeneration:
     p05: float
     p95: float
     h_mean: float
-    h_theory: float | None
-    f_Aa_mean: float | None
+    h_theory: float | None = None
+    f_Aa_mean: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
