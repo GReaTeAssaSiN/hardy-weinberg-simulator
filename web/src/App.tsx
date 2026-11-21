@@ -20,6 +20,7 @@ type Inputs = Record<InputField, string> & {
 };
 type FieldErrors = Partial<Record<InputField, string>>;
 type TabName = 'alleles' | 'genotypes' | 'heterozygosity' | 'table';
+type ChartTab = Exclude<TabName, 'table'>;
 
 const INITIAL: Inputs = {
   n: '500', p0: '0,5', generations: '100',
@@ -36,6 +37,11 @@ const TABS: { id: TabName; label: string }[] = [
   { id: 'heterozygosity', label: 'Гетерозиготность' },
   { id: 'table', label: 'Таблица' },
 ];
+const Y_AXIS_LABELS: Record<ChartTab, string> = {
+  alleles: 'Частота аллеля',
+  genotypes: 'Доля генотипа',
+  heterozygosity: 'Гетерозиготность',
+};
 const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 });
 const integer = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
 const oneDecimal = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
@@ -106,13 +112,20 @@ function FactorCard({ name, symbols, enabled, onToggle, children }: {
 }
 
 function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding, showDrift }: {
-  rows: GenerationRow[]; tab: Exclude<TabName, 'table'>;
+  rows: GenerationRow[]; tab: ChartTab;
   targetP?: number; targetGeneration?: number; showInbreeding: boolean; showDrift: boolean;
 }) {
+  const lastGeneration = rows.at(-1)?.t ?? 0;
+  const intervals = Math.min(5, lastGeneration);
+  const generationTicks = intervals > 0
+    ? Array.from({ length: intervals + 1 }, (_, index) => Math.round(index * lastGeneration / intervals))
+    : [0];
+  const homozygotesOverlap = tab === 'genotypes' && rows.length > 0 && rows.every((row) => row.f_AA === row.f_aa);
   const series: { key: keyof GenerationRow; name: string; color: string; dash?: string }[] = tab === 'alleles'
     ? [{ key: 'p', name: 'p (A)', color: '#2161eb' }, { key: 'q', name: 'q (a)', color: '#e57925' }]
     : tab === 'genotypes'
-      ? [{ key: 'f_AA', name: 'AA', color: '#2161eb' }, { key: 'f_Aa', name: 'Aa', color: '#0d8c82' }, { key: 'f_aa', name: 'aa', color: '#e57925' }]
+      ? [{ key: 'f_AA', name: 'AA', color: '#2161eb' }, { key: 'f_Aa', name: 'Aa', color: '#0d8c82' },
+        { key: 'f_aa', name: 'aa', color: homozygotesOverlap ? '#2161eb' : '#e57925' }]
       : showInbreeding
         ? [{ key: 'h', name: 'Ожидаемая H = 2pq', color: '#536b88', dash: '5 4' },
           { key: 'f_Aa', name: 'Доля Aa при заданном F', color: '#0d8c82' }]
@@ -120,16 +133,23 @@ function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding, sh
   if (tab === 'heterozygosity' && rows[0]?.h_theory !== undefined) {
     series.push({ key: 'h_theory', name: 'Средняя H по теории', color: '#536b88', dash: '5 4' });
   }
+  const legendSeries = homozygotesOverlap ? series.filter((line) => line.key !== 'f_aa') : series;
   return <>
     <div className="chart-wrap" aria-label="График по поколениям">
       <ResponsiveContainer width="100%" height="100%" minWidth={0}>
         <LineChart data={rows} margin={{ top: 12, right: 18, bottom: 14, left: 0 }}>
           <CartesianGrid stroke="#e7ebef" vertical={false} />
-          <XAxis dataKey="t" tick={{ fontSize: 12, fill: '#8290a0' }} tickLine={false} axisLine={{ stroke: '#d6dee5' }} label={{ value: 'Поколение', position: 'insideBottom', offset: -7, fontSize: 12, fill: '#8290a0' }} />
-          <YAxis domain={[0, 1]} tickCount={6} tickFormatter={display} tick={{ fontSize: 12, fill: '#8290a0' }} tickLine={false} axisLine={false} width={42} />
-          <ChartTooltip formatter={(value) => typeof value === 'number' ? display(value) : String(value)} labelFormatter={(label) => `Поколение ${label}`} />
+          <XAxis dataKey="t" ticks={generationTicks} interval={0} tick={{ fontSize: 12, fill: '#8290a0' }}
+            tickLine={false} axisLine={{ stroke: '#d6dee5' }}
+            label={{ value: 'Поколение', position: 'insideBottom', offset: -7, fontSize: 12, fill: '#8290a0' }} />
+          <YAxis domain={[0, 1]} tickCount={6} tickFormatter={display} tick={{ fontSize: 12, fill: '#8290a0' }}
+            tickLine={false} axisLine={false} width={64}
+            label={{ value: Y_AXIS_LABELS[tab], angle: -90, position: 'insideLeft', offset: 10, textAnchor: 'middle', fontSize: 12, fill: '#607184' }} />
+          <ChartTooltip includeHidden={homozygotesOverlap}
+            formatter={(value) => typeof value === 'number' ? display(value) : String(value)} labelFormatter={(label) => `Поколение ${label}`} />
           {series.map((line) => <Line key={line.key} type="linear" dataKey={line.key} name={line.name}
-            stroke={line.color} strokeDasharray={line.dash} strokeWidth={2.5} dot={false} isAnimationActive={false} />)}
+            hide={homozygotesOverlap && line.key === 'f_aa'} stroke={line.color} strokeDasharray={line.dash}
+            strokeWidth={2.5} dot={false} isAnimationActive={false} />)}
           {tab === 'alleles' && targetP !== undefined && <ReferenceLine y={targetP}
             stroke="#718297" strokeDasharray="5 4"
             label={{ value: `p* = ${display(targetP)}`, position: targetP < 0.95 ? 'insideBottomRight' : 'insideTopRight', fill: '#607184', fontSize: 11 }} />}
@@ -140,8 +160,9 @@ function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding, sh
       </ResponsiveContainer>
     </div>
     <div className="chart-caption">Частоты по поколениям. Наведите курсор на график, чтобы увидеть значения.</div>
-    <div className="legend">{series.map((line) => <span key={line.key}>
-      <i style={line.dash ? { borderTop: `2px dashed ${line.color}` } : { backgroundColor: line.color }} />{line.name}
+    <div className="legend">{legendSeries.map((line) => <span key={line.key}>
+      <i style={line.dash ? { borderTop: `2px dashed ${line.color}` } : { backgroundColor: line.color }} />
+      {homozygotesOverlap && line.key === 'f_AA' ? 'AA = aa' : line.name}
     </span>)}</div>
   </>;
 }
@@ -344,7 +365,10 @@ export default function App() {
             </div> : halfLife !== undefined ? <div>
               <span>Снижение средней H вдвое</span><strong>≈ {oneDecimal.format(halfLife)}</strong>
               <small>поколений по теории нейтрального дрейфа</small>
-            </div> : <div><span>Поколений рассчитано</span><strong>{integer.format(last.t)}</strong><small>начальное поколение включено</small></div>}
+            </div> : <div>
+              <span>Поколений после начального</span><strong>{integer.format(last.t)}</strong>
+              <small>Поколения 0–{integer.format(last.t)}. Строк в таблице — {integer.format(result.rows.length)}.</small>
+            </div>}
           </div>
           <div className="result-content">
             <div className="result-tabs" role="tablist" aria-label="Данные расчета">{TABS.map((item) => <button role="tab" aria-selected={tab === item.id} key={item.id} className={tab === item.id ? 'selected' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
