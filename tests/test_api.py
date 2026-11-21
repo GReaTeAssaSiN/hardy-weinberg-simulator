@@ -103,6 +103,41 @@ def test_selection_reports_the_generation_where_no_genotypes_survive(p0, weights
 
 
 @pytest.mark.parametrize(
+    ("f", "genotypes"),
+    [(0, (0.25, 0.5, 0.25)), (0.25, (0.3125, 0.375, 0.3125)), (1, (0.5, 0.0, 0.5))],
+)
+def test_inbreeding_changes_genotypes_but_not_allele_frequencies(f, genotypes):
+    params = {"n": 500, "p0": 0.5, "generations": 2, "inbreeding": {"f": f}}
+    response = client.post("/api/simulate", json=params)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["params"] == params
+    initial, first, second = result["rows"]
+    assert (initial["f_AA"], initial["f_Aa"], initial["f_aa"]) == (0.25, 0.5, 0.25)
+    for row in (first, second):
+        assert (row["p"], row["q"], row["h"]) == (0.5, 0.5, 0.5)
+        assert (row["f_AA"], row["f_Aa"], row["f_aa"]) == pytest.approx(genotypes)
+        assert row["f_AA"] + row["f_Aa"] + row["f_aa"] == pytest.approx(1.0, abs=1e-12)
+
+
+def test_inbreeding_uses_the_frequency_after_migration_and_selection():
+    response = client.post("/api/simulate", json={
+        "n": 500, "p0": 0.25, "generations": 1,
+        "migration": {"m": 0.5, "p_m": 0.75},
+        "selection": {"w11": 1, "w12": 0.5, "w22": 0, "target_p": 0.7},
+        "inbreeding": {"f": 0.5},
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["target_generation"] == 1
+    row = result["rows"][1]
+    assert row["p"] == pytest.approx(0.75)
+    assert (row["f_AA"], row["f_Aa"], row["f_aa"], row["h"]) == pytest.approx(
+        (0.65625, 0.1875, 0.15625, 0.375)
+    )
+
+
+@pytest.mark.parametrize(
     "data",
     [
         {"n": 1, "p0": 0.5, "generations": 10},
@@ -113,6 +148,8 @@ def test_selection_reports_the_generation_where_no_genotypes_survive(p0, weights
         {"n": 100, "p0": 0.5, "generations": 10, "selection": {
             "w11": 1.01, "w12": 1, "w22": 0.6, "target_p": 0.95,
         }},
+        {"n": 100, "p0": 0.5, "generations": 10, "inbreeding": {"f": 1.01}},
+        {"n": 100, "p0": 0.5, "generations": 10, "inbreeding": {"f": "0.25"}},
     ],
 )
 def test_invalid_request_returns_422_instead_of_silent_coercion(data):

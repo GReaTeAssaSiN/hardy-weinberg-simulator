@@ -1,4 +1,4 @@
-"""API симулятора: идеальная популяция, миграция и отбор."""
+"""API симулятора популяции."""
 
 from dataclasses import asdict
 from typing import Annotated
@@ -6,9 +6,11 @@ from typing import Annotated
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.ideal import IdealParameters, simulate_ideal
-from core.migration import MigrationParameters, simulate_migration
-from core.selection import SelectionParameters, ZeroFitnessError, simulate_selection
+from core.ideal import IdealParameters
+from core.inbreeding import InbreedingParameters
+from core.migration import MigrationParameters
+from core.selection import SelectionParameters, ZeroFitnessError
+from core.simulation import simulate as simulate_population
 
 UnitInterval = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
 
@@ -29,6 +31,12 @@ class SelectionRequest(BaseModel):
     target_p: UnitInterval = Field(description="Целевая частота A")
 
 
+class InbreedingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    f: UnitInterval = Field(description="Коэффициент инбридинга")
+
+
 class SimulationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -37,6 +45,7 @@ class SimulationRequest(BaseModel):
     generations: Annotated[int, Field(strict=True, ge=1, le=1_000, description="Число поколений")]
     migration: MigrationRequest | None = None
     selection: SelectionRequest | None = None
+    inbreeding: InbreedingRequest | None = None
 
 
 class GenerationRow(BaseModel):
@@ -46,7 +55,7 @@ class GenerationRow(BaseModel):
     f_AA: float
     f_Aa: float
     f_aa: float
-    h: float
+    h: float = Field(description="Ожидаемая гетерозиготность 2pq")
 
 
 class SimulationResult(BaseModel):
@@ -58,7 +67,7 @@ class SimulationResult(BaseModel):
 app = FastAPI(
     title="Симулятор Харди — Вайнберга",
     version="0.1.0",
-    description="Моделирование идеальной популяции, миграции и отбора.",
+    description="Моделирование идеальной популяции, миграции, отбора и неслучайного скрещивания.",
 )
 
 
@@ -71,17 +80,14 @@ def health() -> dict[str, str]:
 def simulate(params: SimulationRequest) -> SimulationResult:
     population = IdealParameters(params.n, params.p0, params.generations)
     migration = MigrationParameters(**params.migration.model_dump()) if params.migration else None
-    target_generation = None
-    if params.selection is not None:
-        selection = SelectionParameters(**params.selection.model_dump())
-        try:
-            result, target_generation = simulate_selection(population, selection, migration)
-        except ZeroFitnessError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-    elif migration is not None:
-        result = simulate_migration(population, migration)
-    else:
-        result = simulate_ideal(population)
+    selection = SelectionParameters(**params.selection.model_dump()) if params.selection else None
+    inbreeding = InbreedingParameters(params.inbreeding.f) if params.inbreeding else None
+    try:
+        result, target_generation = simulate_population(
+            population, migration=migration, selection=selection, inbreeding=inbreeding,
+        )
+    except ZeroFitnessError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     return SimulationResult(
         params=params,
         rows=[GenerationRow(**asdict(row)) for row in result],
