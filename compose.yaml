@@ -1,5 +1,8 @@
+name: hardy-weinberg-simulator
+
 services:
   api:
+    container_name: ${COMPOSE_PROJECT_NAME}-api
     build:
       context: .
       dockerfile: api/Dockerfile
@@ -11,6 +14,7 @@ services:
       start_period: 5s
 
   web:
+    container_name: ${COMPOSE_PROJECT_NAME}-web
     build:
       context: ./web
     depends_on:
