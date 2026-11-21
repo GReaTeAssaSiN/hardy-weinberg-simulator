@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent,
@@ -179,6 +179,7 @@ export default function App() {
   const [batchStart, setBatchStart] = useState<{ revision: number; params?: SimulationParams }>({ revision: 0 });
   const [scenarios, setScenarios] = useState(loadScenarios);
   const [comparisonMetric, setComparisonMetric] = useState<ComparisonMetric>('p');
+  const chartContainer = useRef<HTMLDivElement>(null);
   const [inputs, setInputs] = useState<Inputs>(INITIAL);
   const [attempted, setAttempted] = useState(false);
   const [result, setResult] = useState<SimulationResult | null>(null);
@@ -367,7 +368,9 @@ export default function App() {
               disabled={loading || resultWasSaved || comparisonIsFull} onClick={saveCurrentScenario}>
               {resultWasSaved ? 'В сравнении' : comparisonIsFull ? 'Сравнение заполнено' : 'В сравнение'}
             </Button>}
-            {result && <ResultsExport result={result} disabled={loading} />}
+            {result && <ResultsExport result={result} disabled={loading} chart={tab !== 'table' ? {
+              container: chartContainer, id: tab, title: TABS.find((item) => item.id === tab)?.label ?? 'Результат моделирования',
+            } : undefined} />}
           </div>
         </div>
         {requestError && <div className="alert-space"><Alert severity="error" action={<Button color="inherit" size="small" onClick={run} disabled={loading}>Повторить</Button>}>{requestError}</Alert></div>}
@@ -401,7 +404,7 @@ export default function App() {
               <small>Поколения 0–{integer.format(last.t)}. Строк в таблице — {integer.format(result.rows.length)}.</small>
             </div>}
           </div>
-          <div className="result-content">
+          <div className="result-content" ref={chartContainer}>
             <div className="result-tabs" role="tablist" aria-label="Данные расчета">{TABS.map((item) => <button role="tab" aria-selected={tab === item.id} key={item.id} className={tab === item.id ? 'selected' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
             {tab === 'table' ? <ResultsTable rows={result.rows} threshold={result.chi_square_summary?.critical_value} />
               : tab === 'chiSquare' ? <ChiSquareResults result={result} />

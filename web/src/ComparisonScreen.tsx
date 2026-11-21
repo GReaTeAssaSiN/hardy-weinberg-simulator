@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
-import { Button, Checkbox, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
+import { useMemo, useRef, useState } from 'react';
+import { Alert, Button, Checkbox, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { captureChart, downloadChartPng } from './chartExport';
 import { describeFactors, display, generationTicks, integer } from './simulationUi';
 import { MAX_SCENARIOS, scenarioName } from './savedScenarios';
 import type { SavedScenario } from './savedScenarios';
@@ -82,6 +83,26 @@ export default function ComparisonScreen({ scenarios, metric, onMetric, onToggle
   onRemove: (id: number) => void;
   onReturn: () => void;
 }) {
+  const chartContainer = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const visible = scenarios.filter((scenario) => scenario.visible);
+
+  async function exportChart() {
+    setExportError('');
+    setExporting(true);
+    try {
+      const notes = visible.map(({ id, result }) => `${scenarioName(id)} · ${describeParameters(result.params).join(' · ')}`);
+      const chart = captureChart(chartContainer.current, `Сравнение сценариев · ${METRICS[metric].label}`, notes);
+      if (!chart) throw new Error('График еще не построен. Повторите попытку.');
+      await downloadChartPng(chart, `comparison-${metric}`);
+    } catch (cause) {
+      setExportError(cause instanceof Error ? cause.message : 'Не удалось подготовить файл PNG.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return <main className="workspace">
     <aside className="panel parameters-panel" aria-label="Сохраненные сценарии">
       <div className="panel-heading">
@@ -107,8 +128,13 @@ export default function ComparisonScreen({ scenarios, metric, onMetric, onToggle
       <Button className="scenario-return" variant="outlined" onClick={onReturn}>К моделированию</Button>
     </aside>
     <section className="panel results-panel" aria-label="Сравнение результатов">
-      <div className="results-header"><h1>Сравнение сценариев</h1></div>
-      {scenarios.length ? <div className="result-content">
+      <div className="results-header">
+        <h1>Сравнение сценариев</h1>
+        {scenarios.length > 0 && <Button className="result-action" size="small" variant="outlined" color="inherit"
+          onClick={exportChart} disabled={!visible.length || exporting}>{exporting ? 'Подготавливаем…' : 'Скачать PNG'}</Button>}
+      </div>
+      {exportError && <div className="alert-space"><Alert severity="error">{exportError}</Alert></div>}
+      {scenarios.length ? <div className="result-content" ref={chartContainer}>
         <div className="result-tabs" role="tablist" aria-label="Показатель сравнения">
           {(Object.entries(METRICS) as [ComparisonMetric, typeof METRICS[ComparisonMetric]][]).map(([id, item]) =>
             <button type="button" role="tab" key={id} aria-selected={metric === id}
