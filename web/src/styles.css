@@ -38,8 +38,10 @@ button { font: inherit; }
 .factor-card { border: 1px solid #e2e8ed; border-radius: 9px; }
 .factor-card-active { border-color: #acd7d2; background: #f8fcfb; }
 .factor-toggle { min-height: 47px; border: 0; color: #202d3d; cursor: pointer; }
-.migration-fields { margin-top: 0; padding: 10px 12px 12px; border-top: 1px dashed #dfe5ea; }
-.migration-fields .field-label { white-space: normal; }
+.factor-fields { margin-top: 0; padding: 10px 12px 12px; border-top: 1px dashed #dfe5ea; }
+.factor-fields .field-label { white-space: normal; }
+.selection-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.selection-target-field { grid-column: 1 / -1; }
 .model-note { display: flex; gap: 9px; margin-top: 16px; padding: 12px; color: #6c7d8d; background: #f4f7f8; border-radius: 8px; font-size: 11px; line-height: 1.5; }
 .model-note strong { color: #485e6a; font-weight: 700; }
 .note-icon { flex: 0 0 auto; display: grid; place-items: center; width: 17px; height: 17px; color: #418b85; border: 1px solid #a8d0ca; border-radius: 50%; font-size: 11px; font-weight: 700; }
@@ -76,6 +78,7 @@ h1 { font-size: 20px; line-height: 1.25; letter-spacing: -.025em; margin: 5px 0 
 .result-tabs button:hover { background: #f3f7f7; }
 .result-tabs button.selected { color: #096b64; background: #e5f3f0; }
 .chart-wrap { width: 100%; height: 310px; margin-top: 20px; }
+.chart-wrap .recharts-reference-line text { paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; }
 .chart-caption { margin-top: 14px; color: #94a0ac; font-size: 11px; }
 .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px; color: #647486; font-size: 11px; }
 .legend span { display: flex; align-items: center; gap: 6px; }
