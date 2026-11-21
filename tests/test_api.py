@@ -1,3 +1,5 @@
+from itertools import product
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -137,6 +139,55 @@ def test_inbreeding_uses_the_frequency_after_migration_and_selection():
     )
 
 
+def test_drift_replays_the_complete_result_with_the_same_seed():
+    params = {"n": 100, "p0": 0.5, "generations": 200, "drift": {"seed": 42}}
+    first = client.post("/api/simulate", json=params)
+    assert first.status_code == 200
+    assert first.content == client.post("/api/simulate", json=params).content
+    result = first.json()
+    assert "boundary" not in result["drift_summary"]
+    assert result["drift_summary"]["theoretical_half_life"] == pytest.approx(138.28257)
+    assert [row["p"] for row in result["rows"][:2]] == pytest.approx([0.5, 0.515])
+    assert result["rows"][138]["h"] == pytest.approx(0.4032)
+    assert result["rows"][138]["h_theory"] == pytest.approx(0.2503543531)
+
+
+def test_api_returns_auto_generated_seed_that_can_replay_the_run():
+    params = {"n": 10, "p0": 0.5, "generations": 20, "drift": {}}
+    first = client.post("/api/simulate", json=params)
+    assert first.status_code == 200
+    result = first.json()
+    seed = result["params"]["drift"]["seed"]
+    assert 0 <= seed < 2**32
+    assert first.content == client.post("/api/simulate", json=result["params"]).content
+
+
+@pytest.mark.parametrize(("migration", "selection", "inbreeding", "drift"), tuple(product((False, True), repeat=4)))
+def test_all_factor_combinations_return_consistent_generation_rows(migration, selection, inbreeding, drift):
+    params = {"n": 100, "p0": 0.3, "generations": 10}
+    if migration:
+        params["migration"] = {"m": 0.1, "p_m": 0.8}
+    if selection:
+        params["selection"] = {"w11": 1, "w12": 1, "w22": 0.6, "target_p": 0.5}
+    if inbreeding:
+        params["inbreeding"] = {"f": 0.25}
+    if drift:
+        params["drift"] = {"seed": 42}
+    response = client.post("/api/simulate", json=params)
+    assert response.status_code == 200
+    result = response.json()
+    assert len(result["rows"]) == 11
+    assert result["rows"][0]["p"] == 0.3
+    for row in result["rows"][1:]:
+        assert row["f_AA"] + row["f_Aa"] + row["f_aa"] == pytest.approx(1.0, abs=1e-12)
+        assert row["p"] == pytest.approx(row["f_AA"] + row["f_Aa"] / 2, abs=1e-12)
+        assert row["f_Aa"] == pytest.approx(row["h"] * (0.75 if inbreeding else 1))
+        if drift:
+            assert 0 <= row["p"] <= 1
+            assert row["p"] * 200 == pytest.approx(round(row["p"] * 200), abs=1e-12)
+    assert ("h_theory" in result["rows"][1]) == (drift and not any((migration, selection, inbreeding)))
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -145,6 +196,9 @@ def test_inbreeding_uses_the_frequency_after_migration_and_selection():
         {"n": 100, "p0": 0.5, "generations": 0},
         {"n": 10.5, "p0": 0.5, "generations": 10},
         {"n": 100, "p0": 0.5, "generations": 10, "drift": True},
+        {"n": 100, "p0": 0.5, "generations": 10, "drift": {"seed": -1}},
+        {"n": 100, "p0": 0.5, "generations": 10, "drift": {"seed": 2**32}},
+        {"n": 100, "p0": 0.5, "generations": 10, "drift": {"seed": True}},
         {"n": 100, "p0": 0.5, "generations": 10, "selection": {
             "w11": 1.01, "w12": 1, "w22": 0.6, "target_p": 0.95,
         }},

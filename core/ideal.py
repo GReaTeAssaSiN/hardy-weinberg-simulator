@@ -34,6 +34,7 @@ class Generation:
     f_Aa: float
     f_aa: float
     h: float
+    h_theory: float | None = None
 
 
 def generation_at_frequency(t: int, p: float) -> Generation:
