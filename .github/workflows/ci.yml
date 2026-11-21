@@ -26,8 +26,12 @@ jobs:
           python-version: '3.12'
       - name: Установить зависимости
         run: python -m pip install -r requirements.txt
-      - name: Выполнить тесты
-        run: python -m pytest -q
+      - name: Установить инструмент покрытия
+        run: python -m pip install coverage==7.10.7
+      - name: Выполнить тесты и измерить покрытие ядра
+        run: python -m coverage run --source=core -m pytest -q
+      - name: Проверить покрытие ядра не ниже 80%
+        run: python -m coverage report --show-missing --fail-under=80
 
   frontend:
     name: Интерфейс — тесты и сборка

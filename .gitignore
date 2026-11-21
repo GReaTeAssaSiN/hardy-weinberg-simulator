@@ -2,6 +2,7 @@
 .cache/
 __pycache__/
 .pytest_cache/
+.coverage
 *.py[cod]
 web/node_modules/
 web/dist/
