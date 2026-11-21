@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import App from './App';
 
 vi.mock('recharts', () => ({
@@ -320,5 +320,45 @@ describe('сравнение сценариев', () => {
     fireEvent.click(screen.getByRole('button', { name: 'В сравнение' }));
     fireEvent.click(screen.getByRole('button', { name: 'Сравнение сценариев' }));
     expect(screen.getAllByRole('checkbox')).toHaveLength(6);
+  });
+});
+
+describe('критерий χ²', () => {
+  async function showResult(values: (number | undefined)[], firstExceedance?: number) {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url, request) => {
+      if (url === '/health') return { ok: true };
+      const rows = values.map((chi_square, t) => ({
+        t, p: 0.5, q: 0.5, f_AA: 0.25, f_Aa: 0.5, f_aa: 0.25, h: 0.5, chi_square,
+      }));
+      return {
+        ok: true,
+        json: async () => ({
+          params: JSON.parse(request.body), rows,
+          chi_square_summary: { critical_value: 3.84, degrees_of_freedom: 1, first_exceedance_generation: firstExceedance },
+        }),
+      };
+    }));
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Поколений T'), { target: { value: String(values.length - 1) } });
+    fireEvent.click(screen.getByRole('button', { name: /Запустить/ }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'Критерий χ²' }));
+  }
+
+  it('показывает первое превышение и выделяет только значения строго выше порога', async () => {
+    await showResult([0, 3.84, 3.84001, undefined], 2);
+    expect(screen.getByText('Первое превышение в поколении 2')).toBeTruthy();
+    expect(screen.getByText(/χ² = 3,84001/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Таблица' }));
+    const [, , onThreshold, above, undefinedRow] = screen.getAllByRole('row');
+    expect(within(onThreshold).getByText('3,84')).toBeTruthy();
+    expect(within(onThreshold).queryByText('Выше порога')).toBeNull();
+    expect(within(above).getByText('Выше порога')).toBeTruthy();
+    expect(within(undefinedRow).getByText('—')).toBeTruthy();
+  });
+
+  it('не рисует нулевую кривую, если χ² не определен ни в одном поколении', async () => {
+    await showResult([undefined, undefined]);
+    expect(screen.getByText('χ² не определяется в этом расчете')).toBeTruthy();
+    expect(screen.queryByTestId('line-chart')).toBeNull();
   });
 });
