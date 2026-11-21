@@ -7,6 +7,8 @@ from typing import Literal
 
 from numpy.random import Generator, default_rng
 
+from core.ideal import Generation
+
 MAX_SEED = 2**32 - 1
 
 
@@ -38,6 +40,13 @@ class DriftBoundary:
 class DriftSummary:
     boundary: DriftBoundary | None
     theoretical_half_life: float | None
+
+
+def first_drift_boundary(rows: list[Generation]) -> DriftBoundary | None:
+    return next(
+        (DriftBoundary("fixation" if row.p == 1 else "loss", row.t) for row in rows if row.p in (0, 1)),
+        None,
+    )
 
 
 def neutral_half_life(gene_copies: int) -> float:

@@ -1,9 +1,12 @@
 """Расчет поколений с доступными факторами в порядке из ТЗ."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
+from numpy.random import Generator
+
 from core.chi_square import ModelChiSquare, summarize_model_chi_square
-from core.drift import DriftBoundary, DriftParameters, DriftSummary, neutral_half_life, sample_frequency
+from core.drift import DriftParameters, DriftSummary, first_drift_boundary, neutral_half_life, sample_frequency
 from core.ideal import Generation, IdealParameters, generation_at_frequency, simulate_ideal
 from core.inbreeding import InbreedingParameters
 from core.migration import MigrationParameters
@@ -18,26 +21,27 @@ class SimulationOutcome:
     drift_summary: DriftSummary | None = None
 
 
-def simulate(
+def simulate_rows(
     population: IdealParameters,
     *,
     migration: MigrationParameters | None = None,
     selection: SelectionParameters | None = None,
     inbreeding: InbreedingParameters | None = None,
-    drift: DriftParameters | None = None,
-) -> SimulationOutcome:
-    if migration is None and selection is None and inbreeding is None and drift is None:
-        rows = simulate_ideal(population)
-        return SimulationOutcome(rows, summarize_model_chi_square(rows, population.population_size))
+    rng: Generator | None = None,
+    check_deadline: Callable[[], None] | None = None,
+) -> list[Generation]:
+    if migration is None and selection is None and inbreeding is None and rng is None:
+        return simulate_ideal(population)
 
-    p0 = p = float(population.initial_frequency)
-    initial = generation_at_frequency(0, p0)
-    rng = drift.generator() if drift is not None else None
+    p = float(population.initial_frequency)
+    initial = generation_at_frequency(0, p)
     gene_copies = 2 * population.population_size
     neutral_drift = rng is not None and migration is None and selection is None and inbreeding is None and initial.h > 0
     neutral_decay = 1 - 1 / gene_copies
     rows = [replace(initial, h_theory=initial.h) if neutral_drift else initial]
     for t in range(1, population.generations + 1):
+        if check_deadline is not None:
+            check_deadline()
         previous_p = p
         if migration is not None:
             p = migration.apply(p)
@@ -60,22 +64,33 @@ def simulate(
         if neutral_drift:
             row = replace(row, h_theory=initial.h * neutral_decay**t)
         rows.append(row)
+    return rows
 
+
+def simulate(
+    population: IdealParameters,
+    *,
+    migration: MigrationParameters | None = None,
+    selection: SelectionParameters | None = None,
+    inbreeding: InbreedingParameters | None = None,
+    drift: DriftParameters | None = None,
+    check_deadline: Callable[[], None] | None = None,
+) -> SimulationOutcome:
+    rows = simulate_rows(
+        population, migration=migration, selection=selection, inbreeding=inbreeding,
+        rng=drift.generator() if drift is not None else None, check_deadline=check_deadline,
+    )
     target_generation = None
     if selection is not None:
         target = selection.target_p
-        if target >= p0:
+        if target >= population.initial_frequency:
             target_generation = next((row.t for row in rows if row.p >= target), None)
         else:
             target_generation = next((row.t for row in rows if row.p <= target), None)
     drift_summary = None
-    if rng is not None:
-        boundary = next(
-            (DriftBoundary("fixation" if row.p == 1 else "loss", row.t) for row in rows if row.p in (0, 1)),
-            None,
-        )
-        half_life = neutral_half_life(gene_copies) if neutral_drift else None
-        drift_summary = DriftSummary(boundary, half_life)
+    if drift is not None:
+        half_life = neutral_half_life(2 * population.population_size) if rows[0].h_theory is not None else None
+        drift_summary = DriftSummary(first_drift_boundary(rows), half_life)
     return SimulationOutcome(
         rows,
         summarize_model_chi_square(rows, population.population_size),
