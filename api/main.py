@@ -13,7 +13,7 @@ from api.export import (
 )
 from api.limits import BATCH_TIMEOUT_SECONDS, SINGLE_TIMEOUT_SECONDS, calculation_budget
 from core.batch import MAX_RUNS, MIN_RUNS, BatchGeneration, BoundaryStatistics, simulate_batch as simulate_replicates
-from core.chi_square import CHI_SQUARE_CRITICAL_VALUE
+from core.chi_square import CHI_SQUARE_CRITICAL_VALUE, MAX_SAMPLE_SIZE, SampleCheck, check_sample
 from core.drift import MAX_SEED, DriftParameters
 from core.ideal import IdealParameters
 from core.inbreeding import InbreedingParameters
@@ -50,6 +50,17 @@ class DriftRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     seed: Annotated[int, Field(strict=True, ge=0, le=MAX_SEED)] | None = None
+
+
+GenotypeCount = Annotated[int, Field(strict=True, ge=0, le=MAX_SAMPLE_SIZE)]
+
+
+class SampleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    AA: GenotypeCount
+    Aa: GenotypeCount
+    aa: GenotypeCount
 
 
 class SimulationRequest(BaseModel):
@@ -140,6 +151,14 @@ app = FastAPI(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/api/check-sample", response_model=SampleCheck)
+def sample_check(params: SampleRequest) -> SampleCheck:
+    try:
+        return check_sample(params.AA, params.Aa, params.aa)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 def model_inputs(params: SimulationRequest) -> tuple[

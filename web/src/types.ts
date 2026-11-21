@@ -37,6 +37,16 @@ export type SimulationResult = {
 
 export type AdditionalFactors = Pick<SimulationParams, 'migration' | 'selection' | 'inbreeding'>;
 
+export type SampleCheckResult = {
+  n: number;
+  p: number;
+  q: number;
+  chi_square: number | null;
+  critical_value: number;
+  verdict: 'compatible' | 'deviation' | 'small_expected' | 'one_allele';
+  rows: { genotype: 'AA' | 'Aa' | 'aa'; observed: number; expected: number; contribution: number | null }[];
+};
+
 export type BatchSimulationParams = SimulationParams & {
   runs: number;
   drift: { seed?: number };
