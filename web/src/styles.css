@@ -99,6 +99,12 @@ h1 { font-size: 20px; line-height: 1.25; letter-spacing: -.025em; margin: 5px 0 
 .table-wrap { margin-top: 12px; }
 .table-wrap .MuiTableCell-root { font-size: 12px; white-space: nowrap; }
 .table-wrap .MuiTableCell-head { color: #65788a; font-weight: 700; }
+.chi-square-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 14px; margin-top: 16px; padding: 12px 14px; border-radius: 8px; background: #f3f6f7; color: #475c70; font-size: 12px; }
+.chi-square-summary strong { font-size: 13px; }
+.chi-square-summary-exceeded, .table-wrap .chi-square-exceeds { background: #fff5e8; }
+.chi-square-summary-exceeded, .chi-square-status { color: #874522; }
+.chi-square-status { margin-left: 8px; font-size: 11px; font-weight: 650; }
+.legend .chi-square-marker { width: 8px; height: 8px; border-radius: 50%; }
 .scenario-count { color: #607184; font-size: 12px; font-variant-numeric: tabular-nums; }
 .scenario-list { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 9px; }
 .scenario-card { display: flex; align-items: flex-start; padding: 8px 6px; border: 1px solid #e2e8ed; border-radius: 9px; }

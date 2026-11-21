@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import BatchScreen from './BatchScreen';
 import ComparisonScreen, { type ComparisonMetric } from './ComparisonScreen';
+import ChiSquareResults, { displayChiSquare } from './ChiSquareResults';
 import ResultsExport from './ResultsExport';
 import { loadScenarios, MAX_SCENARIOS, storeScenarios } from './savedScenarios';
 import { describeFactors, display, generationTicks, Info, integer, oneDecimal, ParamLabel, parseDecimal, parseSeed, SEED_ERROR } from './simulationUi';
@@ -24,8 +25,8 @@ type Inputs = Record<InputField, string> & {
   driftEnabled: boolean;
 };
 type FieldErrors = Partial<Record<InputField, string>>;
-type TabName = 'alleles' | 'genotypes' | 'heterozygosity' | 'table';
-type ChartTab = Exclude<TabName, 'table'>;
+type TabName = 'alleles' | 'genotypes' | 'heterozygosity' | 'chiSquare' | 'table';
+type ChartTab = Exclude<TabName, 'chiSquare' | 'table'>;
 
 const INITIAL: Inputs = {
   n: '500', p0: '0,5', generations: '100',
@@ -39,6 +40,7 @@ const TABS: { id: TabName; label: string }[] = [
   { id: 'alleles', label: 'Частоты аллелей' },
   { id: 'genotypes', label: 'Генотипы' },
   { id: 'heterozygosity', label: 'Гетерозиготность' },
+  { id: 'chiSquare', label: 'Критерий χ²' },
   { id: 'table', label: 'Таблица' },
 ];
 const Y_AXIS_LABELS: Record<ChartTab, string> = {
@@ -147,18 +149,25 @@ function ResultsChart({ rows, tab, targetP, targetGeneration, showInbreeding, sh
   </>;
 }
 
-function ResultsTable({ rows }: { rows: GenerationRow[] }) {
+function ResultsTable({ rows, threshold }: { rows: GenerationRow[]; threshold?: number }) {
   const [page, setPage] = useState(0);
   const [perPage, setPerPage] = useState(10);
   const safePage = Math.min(page, Math.max(0, Math.ceil(rows.length / perPage) - 1));
   return <>
     <TableContainer className="table-wrap">
       <Table size="small" aria-label="Результаты по поколениям">
-        <TableHead><TableRow>{['Поколение', 'p (A)', 'q (a)', 'AA', 'Aa', 'aa', 'H = 2pq'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead>
-        <TableBody>{rows.slice(safePage * perPage, safePage * perPage + perPage).map((row) => <TableRow key={row.t}>
-          <TableCell>{row.t}</TableCell><TableCell>{display(row.p)}</TableCell><TableCell>{display(row.q)}</TableCell>
-          <TableCell>{display(row.f_AA)}</TableCell><TableCell>{display(row.f_Aa)}</TableCell><TableCell>{display(row.f_aa)}</TableCell><TableCell>{display(row.h)}</TableCell>
-        </TableRow>)}</TableBody>
+        <TableHead><TableRow>{['Поколение', 'p (A)', 'q (a)', 'AA', 'Aa', 'aa', 'H = 2pq', 'χ²'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead>
+        <TableBody>{rows.slice(safePage * perPage, safePage * perPage + perPage).map((row) => {
+          const exceeds = row.chi_square != null && threshold !== undefined && row.chi_square > threshold;
+          return <TableRow key={row.t} className={exceeds ? 'chi-square-exceeds' : undefined}>
+            <TableCell>{row.t}</TableCell><TableCell>{display(row.p)}</TableCell><TableCell>{display(row.q)}</TableCell>
+            <TableCell>{display(row.f_AA)}</TableCell><TableCell>{display(row.f_Aa)}</TableCell><TableCell>{display(row.f_aa)}</TableCell><TableCell>{display(row.h)}</TableCell>
+            <TableCell>
+              {row.chi_square == null ? '—' : displayChiSquare(row.chi_square, threshold)}
+              {exceeds && <span className="chi-square-status">Выше порога</span>}
+            </TableCell>
+          </TableRow>;
+        })}</TableBody>
       </Table>
     </TableContainer>
     <TablePagination component="div" count={rows.length} page={safePage} onPageChange={(_, n) => setPage(n)} rowsPerPage={perPage} onRowsPerPageChange={(event) => { setPerPage(Number(event.target.value)); setPage(0); }} rowsPerPageOptions={[10, 25, 50]} labelRowsPerPage="Строк на странице:" labelDisplayedRows={({ from, to, count }) => `${from}–${to} из ${count}`} />
@@ -394,9 +403,11 @@ export default function App() {
           </div>
           <div className="result-content">
             <div className="result-tabs" role="tablist" aria-label="Данные расчета">{TABS.map((item) => <button role="tab" aria-selected={tab === item.id} key={item.id} className={tab === item.id ? 'selected' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
-            {tab === 'table' ? <ResultsTable rows={result.rows} /> : <ResultsChart rows={result.rows} tab={tab}
-              targetP={selection?.target_p} targetGeneration={result.target_generation}
-              showInbreeding={Boolean(inbreeding)} showDrift={Boolean(drift)} />}
+            {tab === 'table' ? <ResultsTable rows={result.rows} threshold={result.chi_square_summary?.critical_value} />
+              : tab === 'chiSquare' ? <ChiSquareResults result={result} />
+                : <ResultsChart rows={result.rows} tab={tab}
+                  targetP={selection?.target_p} targetGeneration={result.target_generation}
+                  showInbreeding={Boolean(inbreeding)} showDrift={Boolean(drift)} />}
             {tab === 'heterozygosity' && halfLife !== undefined && <div className="chart-caption">
               Теоретическая кривая показывает среднее по множеству прогонов. При данной N средняя H уменьшается вдвое примерно за {oneDecimal.format(halfLife)} поколений.
             </div>}
