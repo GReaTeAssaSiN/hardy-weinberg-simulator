@@ -1,15 +1,16 @@
 """API симулятора популяции."""
 
-import csv
 from dataclasses import asdict
-from io import StringIO
 from math import isfinite
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.export import (
+    BATCH_COLUMNS, SINGLE_COLUMNS, XLSX_MEDIA_TYPE, ExportFormat, ExportRow, export_filename, render_csv, render_xlsx,
+)
 from api.limits import BATCH_TIMEOUT_SECONDS, SINGLE_TIMEOUT_SECONDS, calculation_budget
 from core.batch import MAX_RUNS, MIN_RUNS, BatchGeneration, BoundaryStatistics, simulate_batch as simulate_replicates
 from core.chi_square import CHI_SQUARE_CRITICAL_VALUE
@@ -113,18 +114,14 @@ class BatchSimulationResult(BaseModel):
     theoretical_half_life: float | None = None
 
 
-class SingleCsvData(BaseModel):
+class SingleExportData(BaseModel):
     params: SimulationRequest
     rows: Annotated[list[GenerationRow], Field(min_length=2, max_length=1_001)]
 
 
-class BatchCsvData(BaseModel):
+class BatchExportData(BaseModel):
     params: BatchSimulationRequest
     rows: Annotated[list[BatchGeneration], Field(min_length=2, max_length=1_001)]
-
-
-SINGLE_CSV_COLUMNS = ("t", "p", "q", "f_AA", "f_Aa", "f_aa", "h", "h_theory", "chi_square")
-BATCH_CSV_COLUMNS = ("t", "p_mean", "p05", "p95", "h_mean", "h_theory", "f_Aa_mean")
 
 
 LIMIT_RESPONSES = {
@@ -206,31 +203,35 @@ def simulate_batch(params: BatchSimulationRequest) -> BatchSimulationResult:
 
 
 @app.post("/api/export", response_class=Response, responses={
-    200: {"description": "Таблица результатов в CSV", "content": {"text/csv": {}}},
+    200: {"description": "Таблица результатов", "content": {"text/csv": {}, XLSX_MEDIA_TYPE: {}}},
     **LIMIT_RESPONSES,
 })
-def export_csv(result: SingleCsvData | BatchCsvData) -> Response:
+def export_results(
+    result: SingleExportData | BatchExportData,
+    file_format: Annotated[ExportFormat, Query(alias="format")] = "csv",
+) -> Response:
     """Записывает полученные ранее результаты без повторного расчета."""
-    if isinstance(result, BatchCsvData):
-        filename, columns = "hardy-weinberg-batch.csv", BATCH_CSV_COLUMNS
-    else:
-        filename, columns = "hardy-weinberg-simulation.csv", SINGLE_CSV_COLUMNS
-
+    columns = BATCH_COLUMNS if isinstance(result, BatchExportData) else SINGLE_COLUMNS
     with calculation_budget(SINGLE_TIMEOUT_SECONDS):
         if len(result.rows) != result.params.generations + 1:
             raise HTTPException(status_code=422, detail="Для экспорта нужны все поколения от 0 до T.")
-        with StringIO(newline="") as buffer:
-            writer = csv.writer(buffer)
-            writer.writerow(columns)
-            for generation, row in enumerate(result.rows):
-                if row.t != generation:
-                    raise HTTPException(status_code=422, detail="Поколения в таблице должны идти по порядку от 0 до T.")
-                values = [getattr(row, column) for column in columns]
-                if any(isinstance(value, float) and not isfinite(value) for value in values):
-                    raise HTTPException(status_code=422, detail="Таблица результатов должна содержать конечные числовые значения.")
-                writer.writerow(values)
-            return Response(
-                content=buffer.getvalue(),
-                media_type="text/csv",
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-            )
+        rows: list[ExportRow] = []
+        for generation, row in enumerate(result.rows):
+            if row.t != generation:
+                raise HTTPException(status_code=422, detail="Поколения в таблице должны идти по порядку от 0 до T.")
+            values = [getattr(row, column) for column in columns]
+            if any(isinstance(value, float) and not isfinite(value) for value in values):
+                raise HTTPException(status_code=422, detail="Таблица результатов должна содержать конечные числовые значения.")
+            rows.append(values)
+
+        headers = [f"{label} ({column})" for column, label in columns.items()]
+        params = result.params.model_dump(exclude_none=True)
+        if file_format == "xlsx":
+            content, media_type = render_xlsx(headers, rows, params), XLSX_MEDIA_TYPE
+        else:
+            content, media_type = render_csv(headers, rows), "text/csv"
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{export_filename(params, file_format)}"'},
+        )
