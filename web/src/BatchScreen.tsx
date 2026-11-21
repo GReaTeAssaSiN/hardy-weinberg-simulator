@@ -146,6 +146,7 @@ export default function BatchScreen({ active, initialParams, availableFactors, o
   const [requestError, setRequestError] = useState('');
   const [outcome, setOutcome] = useState<{ result: BatchSimulationResult; requestKey: string } | null>(null);
   const [tab, setTab] = useState<BatchTab>('frequency');
+  const chartContainer = useRef<HTMLDivElement>(null);
   const running = useRef<AbortController | null>(null);
   useEffect(() => () => running.current?.abort(), []);
   const { errors, params } = validate(fields, useFactors ? availableFactors : {});
@@ -236,7 +237,10 @@ export default function BatchScreen({ active, initialParams, availableFactors, o
     <section className="panel results-panel" aria-label="Результаты серии">
       <div className="results-header">
         <h1>Результат прогонов</h1>
-        {result && <ResultsExport result={result} disabled={loading} />}
+        {result && <ResultsExport result={result} disabled={loading} chart={{
+          container: chartContainer, id: tab,
+          title: TABS.find((item) => item.id === tab)?.label ?? 'Результат прогонов',
+        }} />}
       </div>
       {requestError && <div className="alert-space"><Alert severity="error"
         action={<Button color="inherit" size="small" onClick={run} disabled={loading}>Повторить</Button>}>{requestError}</Alert></div>}
@@ -256,7 +260,7 @@ export default function BatchScreen({ active, initialParams, availableFactors, o
           <div><span>Средняя H в поколении {integer.format(last.t)}</span><strong>{display(last.h_mean)}</strong>
             <small>{last.h_theory !== undefined ? `по теории · ${display(last.h_theory)}` : 'ожидаемая гетерозиготность 2pq'}</small></div>
         </div>
-        <div className="result-content">
+        <div className="result-content" ref={chartContainer}>
           <div className="result-tabs" role="tablist" aria-label="Данные серии">
             {TABS.map((item) => <button key={item.id} role="tab" type="button" aria-selected={tab === item.id}
               className={tab === item.id ? 'selected' : undefined} onClick={() => setTab(item.id)}>{item.label}</button>)}
