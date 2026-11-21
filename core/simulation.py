@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, replace
 
+from core.chi_square import ModelChiSquare, summarize_model_chi_square
 from core.drift import DriftBoundary, DriftParameters, DriftSummary, neutral_half_life, sample_frequency
 from core.ideal import Generation, IdealParameters, generation_at_frequency, simulate_ideal
 from core.inbreeding import InbreedingParameters
@@ -12,6 +13,7 @@ from core.selection import SelectionParameters, ZeroFitnessError
 @dataclass(frozen=True, slots=True)
 class SimulationOutcome:
     rows: list[Generation]
+    chi_square: ModelChiSquare
     target_generation: int | None = None
     drift_summary: DriftSummary | None = None
 
@@ -25,7 +27,8 @@ def simulate(
     drift: DriftParameters | None = None,
 ) -> SimulationOutcome:
     if migration is None and selection is None and inbreeding is None and drift is None:
-        return SimulationOutcome(simulate_ideal(population))
+        rows = simulate_ideal(population)
+        return SimulationOutcome(rows, summarize_model_chi_square(rows, population.population_size))
 
     p0 = p = float(population.initial_frequency)
     initial = generation_at_frequency(0, p0)
@@ -73,4 +76,9 @@ def simulate(
         )
         half_life = neutral_half_life(gene_copies) if neutral_drift else None
         drift_summary = DriftSummary(boundary, half_life)
-    return SimulationOutcome(rows, target_generation, drift_summary)
+    return SimulationOutcome(
+        rows,
+        summarize_model_chi_square(rows, population.population_size),
+        target_generation=target_generation,
+        drift_summary=drift_summary,
+    )

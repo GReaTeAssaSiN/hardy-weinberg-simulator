@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.chi_square import CHI_SQUARE_CRITICAL_VALUE
 from core.drift import MAX_SEED, DriftParameters
 from core.ideal import IdealParameters
 from core.inbreeding import InbreedingParameters
@@ -65,6 +66,7 @@ class GenerationRow(BaseModel):
     f_aa: float
     h: float = Field(description="Ожидаемая гетерозиготность 2pq")
     h_theory: float | None = Field(default=None, description="Средняя H по теории нейтрального дрейфа")
+    chi_square: float | None = Field(default=None, description="χ² для модельных частот генотипов")
 
 
 class DriftBoundaryResult(BaseModel):
@@ -77,11 +79,18 @@ class DriftResult(BaseModel):
     theoretical_half_life: float | None = None
 
 
+class ChiSquareSummary(BaseModel):
+    critical_value: float = CHI_SQUARE_CRITICAL_VALUE
+    degrees_of_freedom: int = 1
+    first_exceedance_generation: int | None = None
+
+
 class SimulationResult(BaseModel):
     params: SimulationRequest
     rows: list[GenerationRow]
     target_generation: int | None = Field(default=None, description="Первое поколение, достигшее цели отбора")
     drift_summary: DriftResult | None = None
+    chi_square_summary: ChiSquareSummary
 
 
 app = FastAPI(
@@ -117,7 +126,11 @@ def simulate(params: SimulationRequest) -> SimulationResult:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return SimulationResult(
         params=params,
-        rows=[GenerationRow(**asdict(row)) for row in result.rows],
+        rows=[
+            GenerationRow(**asdict(row), chi_square=value)
+            for row, value in zip(result.rows, result.chi_square.values, strict=True)
+        ],
         target_generation=result.target_generation,
         drift_summary=DriftResult(**asdict(result.drift_summary)) if result.drift_summary is not None else None,
+        chi_square_summary=ChiSquareSummary(first_exceedance_generation=result.chi_square.first_exceedance_generation),
     )

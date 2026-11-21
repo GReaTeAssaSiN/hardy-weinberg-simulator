@@ -20,6 +20,8 @@ def test_ideal_run_via_http():
     assert (row["p"], row["q"], row["f_AA"], row["f_Aa"], row["f_aa"]) == pytest.approx(
         (0.3, 0.7, 0.09, 0.42, 0.49)
     )
+    assert all(row["chi_square"] == 0 for row in result["rows"])
+    assert "first_exceedance_generation" not in result["chi_square_summary"]
 
 
 @pytest.mark.parametrize(
@@ -137,6 +139,53 @@ def test_inbreeding_uses_the_frequency_after_migration_and_selection():
     assert (row["f_AA"], row["f_Aa"], row["f_aa"], row["h"]) == pytest.approx(
         (0.65625, 0.1875, 0.15625, 0.375)
     )
+
+
+def test_model_chi_square_matches_the_step3_reference():
+    response = client.post("/api/simulate", json={
+        "n": 500, "p0": 0.5, "generations": 3, "inbreeding": {"f": 0.25},
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["chi_square_summary"] == {
+        "critical_value": 3.84,
+        "degrees_of_freedom": 1,
+        "first_exceedance_generation": 1,
+    }
+    assert [row["chi_square"] for row in result["rows"]] == pytest.approx([0, 31.25, 31.25, 31.25])
+
+
+def test_model_chi_square_requires_strict_threshold_exceedance():
+    response = client.post("/api/simulate", json={
+        "n": 384, "p0": 0.5, "generations": 1, "inbreeding": {"f": 0.1},
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["rows"][1]["chi_square"] == 3.84
+    assert "first_exceedance_generation" not in result["chi_square_summary"]
+
+
+@pytest.mark.parametrize(("seed", "p"), [(0, 0), (1, 1)])
+def test_model_chi_square_is_undefined_at_loss_or_fixation(seed, p):
+    response = client.post("/api/simulate", json={
+        "n": 2, "p0": 0.5, "generations": 5, "inbreeding": {"f": 0.25}, "drift": {"seed": seed},
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["rows"][-1]["p"] == p
+    for row in result["rows"]:
+        if row["p"] in (0, 1):
+            assert "chi_square" not in row
+        else:
+            assert row["chi_square"] == pytest.approx(0 if row["t"] == 0 else 0.125)
+
+
+def test_model_chi_square_handles_very_small_nonzero_frequencies():
+    response = client.post("/api/simulate", json={
+        "n": 500, "p0": 1e-200, "generations": 1, "inbreeding": {"f": 0.25},
+    })
+    assert response.status_code == 200
+    assert response.json()["rows"][1]["chi_square"] == pytest.approx(31.25)
 
 
 def test_drift_replays_the_complete_result_with_the_same_seed():
