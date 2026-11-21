@@ -24,6 +24,11 @@ export type SimulationResult = {
   params: SimulationParams;
   rows: GenerationRow[];
   target_generation?: number;
+  chi_square_summary?: {
+    critical_value: number;
+    degrees_of_freedom: number;
+    first_exceedance_generation?: number;
+  };
   drift_summary?: {
     boundary?: { kind: 'fixation' | 'loss'; generation: number };
     theoretical_half_life?: number;

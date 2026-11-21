@@ -7,7 +7,7 @@ vi.mock('recharts', () => ({
   CartesianGrid: () => null,
   ComposedChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Line: () => null,
-  LineChart: () => <div>Тестовый график</div>,
+  LineChart: ({ data }: { data: unknown[] }) => <div data-testid="line-chart" data-rows={JSON.stringify(data)} />,
   ReferenceLine: () => null,
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Tooltip: () => null,
@@ -15,7 +15,11 @@ vi.mock('recharts', () => ({
   YAxis: () => null,
 }));
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  cleanup();
+  sessionStorage.clear();
+  vi.unstubAllGlobals();
+});
 
 describe('моделирование популяции', () => {
   it('не отправляет расчет при неверной частоте', async () => {
@@ -254,5 +258,67 @@ describe('многократные прогоны', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/simulate/batch')).toHaveLength(2));
     await screen.findByText(/Сервер занят/);
+  });
+});
+
+describe('сравнение сценариев', () => {
+  function renderSimulation() {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url, request) => {
+      if (url === '/health') return { ok: true };
+      const params = JSON.parse(request.body);
+      const p = params.p0;
+      const q = 1 - p;
+      const rows = Array.from({ length: params.generations + 1 }, (_, t) => ({
+        t, p, q, f_AA: p * p, f_Aa: 2 * p * q, f_aa: q * q, h: 2 * p * q,
+      }));
+      return { ok: true, json: async () => ({ params, rows }) };
+    }));
+    return render(<App />);
+  }
+
+  async function saveRun(p0: string, generations: string) {
+    fireEvent.change(screen.getByLabelText('Частота p (A)'), { target: { value: p0 } });
+    fireEvent.change(screen.getByLabelText('Поколений T'), { target: { value: generations } });
+    fireEvent.click(screen.getByRole('button', { name: /Запустить/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'В сравнение' }));
+  }
+
+  it('накладывает расчеты разной длины, переключает показатель и сохраняет видимость после обновления', async () => {
+    const { unmount } = renderSimulation();
+    await saveRun('0,5', '1');
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'В сравнении' }).disabled).toBe(true);
+    await saveRun('0,25', '2');
+    fireEvent.click(screen.getByRole('button', { name: 'Сравнение сценариев' }));
+
+    const chartRows = () => JSON.parse(screen.getByTestId('line-chart').getAttribute('data-rows')!);
+    expect(chartRows().at(-1)).toEqual({ t: 2, s1: null, s2: 0.25 });
+    fireEvent.click(screen.getByRole('tab', { name: 'Доля aa' }));
+    expect(chartRows()[0]).toEqual({ t: 0, s1: 0.25, s2: 0.5625 });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Показать сценарий 2' }));
+    expect(chartRows().at(-1).t).toBe(1);
+    expect(screen.getByRole('table', { name: 'Сводная таблица сценариев' })).toBeTruthy();
+
+    unmount();
+    renderSimulation();
+    fireEvent.click(screen.getByRole('button', { name: 'Сравнение сценариев' }));
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Показать сценарий 2' }).checked).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить сценарий 2' }));
+    expect(screen.queryByRole('checkbox', { name: 'Показать сценарий 2' })).toBeNull();
+  });
+
+  it('вмещает шесть сценариев и освобождает место после удаления', async () => {
+    renderSimulation();
+    for (let t = 1; t <= 6; t++) await saveRun('0,5', String(t));
+    fireEvent.change(screen.getByLabelText('Поколений T'), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: /Запустить/ }));
+    const full = await screen.findByRole<HTMLButtonElement>('button', { name: 'Сравнение заполнено' });
+    expect(full.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Сравнение сценариев' }));
+    expect(screen.getAllByRole('checkbox')).toHaveLength(6);
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить сценарий 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'К моделированию' }));
+    fireEvent.click(screen.getByRole('button', { name: 'В сравнение' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Сравнение сценариев' }));
+    expect(screen.getAllByRole('checkbox')).toHaveLength(6);
   });
 });
