@@ -3,7 +3,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import App from './App';
 
 vi.mock('recharts', () => ({
+  Area: () => null,
   CartesianGrid: () => null,
+  ComposedChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Line: () => null,
   LineChart: () => <div>Тестовый график</div>,
   ReferenceLine: () => null,
@@ -176,5 +178,81 @@ describe('моделирование популяции', () => {
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/simulate').length).toBe(2));
     const calls = fetchMock.mock.calls.filter(([url]) => url === '/api/simulate');
     expect(calls.map(([, request]) => JSON.parse(request.body).drift)).toEqual([{}, { seed: 42 }]);
+  });
+});
+
+describe('многократные прогоны', () => {
+  const rows = [
+    { t: 0, p_mean: 0.5, p05: 0.5, p95: 0.5, h_mean: 0.5, h_theory: 0.5 },
+    { t: 100, p_mean: 0.52, p05: 0, p95: 1, h_mean: 0.17, h_theory: 0.183 },
+  ];
+  const fixation = { count: 50, share: 0.25, mean_generation: 61 };
+  const loss = { count: 40, share: 0.2, mean_generation: 60 };
+
+  it('проверяет число прогонов, подставляет полученное зерно и сохраняет результат при навигации', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url, request) => {
+      if (url === '/health') return { ok: true };
+      const params = JSON.parse(request.body);
+      return { ok: true, json: async () => ({ params: { ...params, drift: { seed: 7 } }, rows, trajectories: [], fixation, loss }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Многократные прогоны' }));
+    const runs = screen.getByRole('textbox', { name: 'Число прогонов' });
+    const seed = screen.getByRole<HTMLInputElement>('textbox', { name: 'Зерно генератора' });
+    const run = screen.getByRole('button', { name: /Запустить прогоны/ });
+    fireEvent.change(runs, { target: { value: '1001' } });
+    fireEvent.click(run);
+    expect(screen.getByText('Введите целое число от 10 до 1 000')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(runs, { target: { value: '200' } });
+    fireEvent.change(seed, { target: { value: '' } });
+    fireEvent.click(run);
+    await screen.findByText('0,52');
+    expect(seed.value).toBe('7');
+    const [url, request] = fetchMock.mock.calls[1];
+    expect(url).toBe('/api/simulate/batch');
+    expect(JSON.parse(request.body)).toEqual({ n: 50, p0: 0.5, generations: 100, runs: 200, drift: {} });
+    expect(screen.getByText(/50 из 200 прогонов/)).toBeTruthy();
+    expect(screen.queryByText(/Параметры изменены/)).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Гетерозиготность' }));
+    expect(screen.getByText('Средняя H по теории')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Моделирование' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Многократные прогоны' }));
+    expect(screen.getByText('0,52')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Число прогонов' }), { target: { value: '100' } });
+    expect(screen.getByText(/Параметры изменены/)).toBeTruthy();
+  });
+
+  it('переносит параметры из одиночного расчета и отправляет включенные факторы', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url, request) => {
+      if (url === '/health') return { ok: true };
+      const params = JSON.parse(request.body);
+      if (url === '/api/simulate') {
+        const row = { t: 100, p: 0.8, q: 0.2, f_AA: 0.64, f_Aa: 0.32, f_aa: 0.04, h: 0.32 };
+        return { ok: true, json: async () => ({ params, rows: [row] }) };
+      }
+      return { ok: false, status: 429 };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Численность N'), { target: { value: '125' } });
+    fireEvent.click(screen.getByRole('switch', { name: 'Миграция' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Генетический дрейф' }));
+    fireEvent.click(screen.getByRole('button', { name: /Запустить/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Оценить разброс' }));
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Численность N' }).value).toBe('125');
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Зерно генератора' }).value).toBe('42');
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: /Учесть миграцию/ }).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /Запустить прогоны/ }));
+    await screen.findByText(/Сервер занят/);
+    const [, request] = fetchMock.mock.calls.find(([url]) => url === '/api/simulate/batch')!;
+    expect(JSON.parse(request.body)).toEqual({
+      n: 125, p0: 0.5, generations: 100, runs: 200, drift: { seed: 42 }, migration: { m: 0.1, p_m: 0.8 },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/simulate/batch')).toHaveLength(2));
+    await screen.findByText(/Сервер занят/);
   });
 });

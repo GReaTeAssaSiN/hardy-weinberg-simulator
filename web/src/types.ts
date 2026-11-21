@@ -28,3 +28,34 @@ export type SimulationResult = {
     theoretical_half_life?: number;
   };
 };
+
+export type AdditionalFactors = Pick<SimulationParams, 'migration' | 'selection' | 'inbreeding'>;
+
+export type BatchSimulationParams = SimulationParams & {
+  runs: number;
+  drift: { seed?: number };
+};
+
+export type BatchGenerationRow = {
+  t: number;
+  p_mean: number;
+  p05: number;
+  p95: number;
+  h_mean: number;
+  h_theory?: number;
+  f_Aa_mean?: number;
+};
+
+export type BatchBoundary = {
+  count: number;
+  share: number;
+  mean_generation?: number;
+};
+
+export type BatchSimulationResult = {
+  params: BatchSimulationParams & { drift: { seed: number } };
+  rows: BatchGenerationRow[];
+  trajectories: number[][];
+  fixation: BatchBoundary;
+  loss: BatchBoundary;
+};
