@@ -17,6 +17,7 @@ export type GenerationRow = {
   f_aa: number;
   h: number;
   h_theory?: number;
+  chi_square?: number;
 };
 
 export type SimulationResult = {

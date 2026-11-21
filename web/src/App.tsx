@@ -10,6 +10,7 @@ import {
   XAxis, YAxis,
 } from 'recharts';
 import BatchScreen from './BatchScreen';
+import CsvExport from './CsvExport';
 import { describeFactors, display, generationTicks, Info, integer, oneDecimal, ParamLabel, parseDecimal, parseSeed, SEED_ERROR } from './simulationUi';
 import type { AdditionalFactors, GenerationRow, SimulationParams, SimulationResult } from './types';
 
@@ -328,7 +329,13 @@ export default function App() {
         <div className="actions"><Button variant="contained" onClick={run} disabled={loading} startIcon={loading ? <CircularProgress size={15} color="inherit" /> : <span className="play-icon">▶</span>}>{loading ? 'Расчет…' : 'Запустить'}</Button><Button variant="outlined" color="inherit" onClick={reset} disabled={loading}>Сбросить</Button></div>
       </aside>
       <section className="panel results-panel" aria-label="Результаты моделирования">
-        <div className="results-header"><div><span className="eyebrow">Моделирование</span><h1>Результат моделирования</h1></div><span className="mode-badge"><span />{mode}</span></div>
+        <div className="results-header">
+          <div><span className="eyebrow">Моделирование</span><h1>Результат моделирования</h1></div>
+          <div className="results-header-actions">
+            <span className="mode-badge"><span />{mode}</span>
+            {result && <CsvExport result={result} disabled={loading} />}
+          </div>
+        </div>
         {requestError && <div className="alert-space"><Alert severity="error" action={<Button color="inherit" size="small" onClick={run} disabled={loading}>Повторить</Button>}>{requestError}</Alert></div>}
         {!result && !loading && <div className="empty-state">
           <div className="empty-chart"><svg viewBox="0 0 100 72" fill="none" aria-hidden="true"><path d="M10 7v52h80" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/><path d="M17 46 35 33l17 5 17-20 17 6" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="69" cy="18" r="4" fill="currentColor"/></svg></div>
