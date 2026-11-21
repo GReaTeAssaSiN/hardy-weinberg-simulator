@@ -10,7 +10,7 @@ import {
   XAxis, YAxis,
 } from 'recharts';
 import BatchScreen from './BatchScreen';
-import CsvExport from './CsvExport';
+import ResultsExport from './ResultsExport';
 import { describeFactors, display, generationTicks, Info, integer, oneDecimal, ParamLabel, parseDecimal, parseSeed, SEED_ERROR } from './simulationUi';
 import type { AdditionalFactors, GenerationRow, SimulationParams, SimulationResult } from './types';
 
@@ -333,7 +333,7 @@ export default function App() {
           <div><span className="eyebrow">Моделирование</span><h1>Результат моделирования</h1></div>
           <div className="results-header-actions">
             <span className="mode-badge"><span />{mode}</span>
-            {result && <CsvExport result={result} disabled={loading} />}
+            {result && <ResultsExport result={result} disabled={loading} />}
           </div>
         </div>
         {requestError && <div className="alert-space"><Alert severity="error" action={<Button color="inherit" size="small" onClick={run} disabled={loading}>Повторить</Button>}>{requestError}</Alert></div>}

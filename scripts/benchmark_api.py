@@ -71,7 +71,7 @@ def main():
     for label, result in [("CSV одиночного прогона", single), ("CSV серии", batch)]:
         outcome = json.loads(result)
         export, _ = measure(url, label, EXPORT, {"params": outcome["params"], "rows": outcome["rows"]}, args.repetitions)
-        if len(list(csv.DictReader(StringIO(export.decode())))) != POPULATION["generations"] + 1:
+        if len(list(csv.DictReader(StringIO(export.decode("utf-8-sig"))))) != POPULATION["generations"] + 1:
             raise SystemExit(f"{label} — неверное число поколений")
 
     workload = POPULATION | {"runs": 1_000}
