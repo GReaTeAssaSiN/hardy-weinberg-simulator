@@ -1,0 +1,7 @@
+*
+!requirements.txt
+!api/
+!api/Dockerfile
+!api/*.py
+!core/
+!core/*.py
