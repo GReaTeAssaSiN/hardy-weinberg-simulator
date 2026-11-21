@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent,
-  DialogTitle, Switch, Table, TableBody, TableCell, TableContainer, TableHead,
+  Alert, Button, CircularProgress, Switch, Table, TableBody, TableCell, TableContainer, TableHead,
   TablePagination, TableRow, TextField,
 } from '@mui/material';
 import {
@@ -13,6 +12,7 @@ import BatchScreen from './BatchScreen';
 import ComparisonScreen, { type ComparisonMetric } from './ComparisonScreen';
 import ChiSquareResults, { displayChiSquare } from './ChiSquareResults';
 import ExamplesScreen from './ExamplesScreen';
+import HelpDialog from './HelpDialog';
 import ResultsExport from './ResultsExport';
 import SampleCheckScreen from './SampleCheckScreen';
 import { loadScenarios, MAX_SCENARIOS, storeScenarios } from './savedScenarios';
@@ -473,18 +473,6 @@ export default function App() {
     {screen === 'examples' && <ExamplesScreen onOpen={openExample} loading={loading} />}
     <SampleCheckScreen active={screen === 'sample'} onServerState={(online) => setServer(online ? 'online' : 'offline')} />
     <footer className="footer">Учебная модель · Один локус, два аллеля, неперекрывающиеся поколения</footer>
-    <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="sm" fullWidth>
-      <DialogTitle>Справка</DialogTitle>
-      <DialogContent>
-        <Box component="p">В идеальной популяции частоты аллелей остаются постоянными. Для частоты аллеля A, равной p, частота a равна q = 1 − p.</Box>
-        <Box component="p">Ожидаемые доли генотипов: AA = p², Aa = 2pq, aa = q². Гетерозиготность H = 2pq.</Box>
-        <Box component="p">При миграции частота аллеля A в следующем поколении равна (1 − m)p + m·pₘ. Здесь m — доля мигрантов, pₘ — частота аллеля A среди них.</Box>
-        <Box component="p">При отборе приспособленность определяет долю выживших для каждого генотипа. Если включена миграция, отбор применяется после нее.</Box>
-        <Box component="p">При инбридинге частоты аллелей остаются прежними, а доля гетерозигот Aa равна 2pq(1 − F). График гетерозиготности сравнивает ее с ожидаемой долей 2pq при случайном скрещивании.</Box>
-        <Box component="p">При дрейфе частота меняется случайно: в каждом поколении выбираются 2N копий аллелей. При тех же параметрах и зерне расчет повторяется. Теория описывает среднее для дрейфа без других факторов.</Box>
-        <Box component="p">Критерий χ² сравнивает наблюдаемые или расчетные численности с ожидаемыми по формулам Np², 2Npq и Nq². Для наблюдаемых данных откройте «Проверка выборки».</Box>
-      </DialogContent>
-      <DialogActions><Button onClick={() => setHelpOpen(false)}>Понятно</Button></DialogActions>
-    </Dialog>
+    <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
   </div>;
 }
